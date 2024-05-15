@@ -6,4 +6,6 @@
 
 ## SavedVariables: EmoteMenuDB
 
+Libs\libs.xml
+Emote_Menu_Store.lua
 Emote_Menu.lua
