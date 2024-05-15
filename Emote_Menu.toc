@@ -1,0 +1,9 @@
+## Interface: 11500
+## Author: Edwin Dover
+## Version: 0.1.0
+## Title: Emote Menu
+## Notes: Menu for all emotes
+
+## SavedVariables: EmoteMenuDB
+
+Emote_Menu.lua
