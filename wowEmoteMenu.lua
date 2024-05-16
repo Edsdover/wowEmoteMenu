@@ -72,7 +72,7 @@ dbLoader:RegisterEvent("ADDON_LOADED");
 dbLoader:RegisterEvent("PLAYER_LOGOUT")
 
 function dbLoader:OnEvent(event, arg1)
-    if (event == "ADDON_LOADED" and arg1 == "Emote_Menu") then
+    if (event == "ADDON_LOADED" and arg1 == "wowEmoteMenu-main") then
         -- Load init values if none in DB
         EmoteMenu:LoadVarChk("ShowMinimapIcon", "On");
         EmoteMenu:LoadVarAnc("MapPosA", "CENTER")					-- Map anchor
