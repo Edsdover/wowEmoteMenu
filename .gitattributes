@@ -3,3 +3,11 @@
 *.png binary
 *.tga binary
 *.blp binary
+
+# These are read by Linux tooling, not by WoW. The packager parses .pkgmeta
+# on a runner, and a trailing CR would end up inside values -- package-as
+# would name the addon folder EmoteMenu<CR>.
+.pkgmeta text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
