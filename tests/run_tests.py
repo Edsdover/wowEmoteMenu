@@ -1032,6 +1032,59 @@ check("rows are spaced by the new height", first_points(2)[2][2] == 0
           end
       end)()""") == 26)
 
+def font_height(L, name):
+    """GetFont returns three values; lupa hands back a tuple, so unpack in Lua."""
+    return L.eval("(function() local _, h = %s:GetFont() return h end)()" % name)
+
+
+font = opt_row("Text")
+check("a text size control is present", font is not None)
+font.slider.SetValue(font.slider, 14)
+check("the text slider resizes the shared font object",
+      font_height(L11, "EmoteMenuButtonFont") == 14,
+      font_height(L11, "EmoteMenuButtonFont"))
+check("the highlight font matches, so the label cannot jump on hover",
+      font_height(L11, "EmoteMenuButtonFontHighlight") == 14)
+check("every emote button follows that one font object", L11.eval("""(function()
+    local n = 0
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil then
+            if f.normalFont ~= EmoteMenuButtonFont then return false end
+            if f.highlightFont ~= EmoteMenuButtonFontHighlight then return false end
+            n = n + 1
+        end
+    end
+    return n > 0
+end)()""") is True)
+check("the font keeps a real font file",
+      L11.eval("(function() return (EmoteMenuButtonFont:GetFont()) end)()") not in (None, ""))
+
+# The number beside each slider is an edit box, so it can be typed into.
+wbox = width.box
+wbox.SetText(wbox, "150")
+wbox.EnterPressed(wbox)
+check("typing a width applies it", EM11.ButtonW == 150, EM11.ButtonW)
+check("and the slider moves with it", width.slider.value == 150, width.slider.value)
+check("the grid reflows to the typed width", columns11() == 6, columns11())
+
+wbox.SetText(wbox, "999")
+wbox.EnterPressed(wbox)
+check("a typed number past the maximum is clamped", EM11.ButtonW == 180, EM11.ButtonW)
+check("and the box is redrawn with what was accepted", wbox.text == "180", wbox.text)
+
+wbox.SetText(wbox, "70")
+wbox.Escape(wbox)
+check("escape in the box abandons the edit",
+      EM11.ButtonW == 180 and wbox.text == "180", f"{EM11.ButtonW} / {wbox.text}")
+
+wbox.SetText(wbox, "")
+wbox.EnterPressed(wbox)
+check("an empty box reverts rather than resizing to nothing",
+      EM11.ButtonW == 180 and wbox.text == "180", f"{EM11.ButtonW} / {wbox.text}")
+
+wbox.SetText(wbox, "100")
+wbox.EnterPressed(wbox)
+
 # Clamped at both ends: a slider cannot be dragged out of range, but a saved
 # variable can arrive out of range and the two share the same limits.
 width.slider.SetValue(width.slider, 1000)
@@ -1081,6 +1134,10 @@ check("reset restores the button size",
       EM11.ButtonW == EM11.BUTTON_WIDTH and EM11.ButtonH == BH,
       f"{EM11.ButtonW}x{EM11.ButtonH}")
 check("reset restores the sort order", EM11.SortOrder == "across")
+check("reset restores the text size",
+      EM11.FontSize == EM11.DEFAULT_FONT_SIZE
+      and font_height(L11, "EmoteMenuButtonFont") == EM11.DEFAULT_FONT_SIZE,
+      EM11.FontSize)
 check("reset restores the panel size",
       EM11.PanelW == DEFAULT_W and EM11.PanelH == DEFAULT_H)
 check("reset recentres the panel", EM11.MainPanelX == 0 and EM11.MainPanelA == "CENTER")
@@ -1103,8 +1160,8 @@ check("the options are written to the DB",
 
 print("\n== 2h. saved options come back ==")
 L12 = new_runtime('''{
-    ButtonW = 130, ButtonH = 24, SortOrder = "down", EscapeCloses = "Off",
-    ShowMinimapIcon = "On", settingsWritten = 1,
+    ButtonW = 130, ButtonH = 24, FontSize = 15, SortOrder = "down",
+    EscapeCloses = "Off", ShowMinimapIcon = "On", settingsWritten = 1,
 }''')
 L12.execute(f'''
 for _, f in ipairs(__frames) do
@@ -1115,6 +1172,10 @@ EM12 = L12.eval("__core.EmoteMenu")
 check("saved button size restored", EM12.ButtonW == 130 and EM12.ButtonH == 24,
       f"{EM12.ButtonW}x{EM12.ButtonH}")
 check("saved sort order restored", EM12.SortOrder == "down")
+check("saved text size restored and applied before any button is built",
+      EM12.FontSize == 15
+      and font_height(L12, "EmoteMenuButtonFont") == 15,
+      EM12.FontSize)
 check("escape stays off across a reload",
       "EmoteMenuFrame" not in list(L12.eval("UISpecialFrames").values()))
 L12.execute("SlashCmdList['EMOTE_MENU']('')")
@@ -1134,7 +1195,8 @@ check("and laid out down the columns", L12.eval("""(function()
 end)()""") is True)
 
 L13 = new_runtime('''{
-    ButtonW = 5000, ButtonH = "tall", SortOrder = "sideways", EscapeCloses = "Maybe",
+    ButtonW = 5000, ButtonH = "tall", FontSize = 0, SortOrder = "sideways",
+    EscapeCloses = "Maybe",
 }''')
 L13.execute(f'''
 for _, f in ipairs(__frames) do
@@ -1144,6 +1206,7 @@ end
 EM13 = L13.eval("__core.EmoteMenu")
 check("an absurd button width is rejected", EM13.ButtonW == EM13.BUTTON_WIDTH, EM13.ButtonW)
 check("a non-numeric button height is rejected", EM13.ButtonH == BH, EM13.ButtonH)
+check("a zero text size is rejected", EM13.FontSize == EM13.DEFAULT_FONT_SIZE, EM13.FontSize)
 check("an unknown sort order is rejected", EM13.SortOrder == "across", EM13.SortOrder)
 check("a bad escape setting is rejected", EM13.EscapeCloses == "On", EM13.EscapeCloses)
 

@@ -39,10 +39,11 @@ an animation (the dancer). Every emote was checked in game one at a time.
 scrollbar appears only when it is needed.
 
 **The cog** at the top right opens the options: whether the list runs A to Z
-across the rows or down the columns, how wide and how tall the buttons are,
-whether Escape closes the menu, and whether the minimap icon is shown. There is
-a **Reset to defaults** there too, which puts the size, position and appearance
-back the way they shipped without touching your tabs.
+across the rows or down the columns, how wide and how tall the buttons are and
+how big their text is, whether Escape closes the menu, and whether the minimap
+icon is shown. Each slider's number can be typed into as well as dragged. There
+is a **Reset to defaults** there too, which puts the size, position and
+appearance back the way they shipped without touching your tabs.
 
 
 ### Tabs

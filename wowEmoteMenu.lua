@@ -314,6 +314,68 @@ local MIN_BUTTON_W, MAX_BUTTON_W = 70, 180
 local MIN_BUTTON_H, MAX_BUTTON_H = 14, 30
 EmoteMenu.ButtonW = BUTTON_WIDTH
 EmoteMenu.ButtonH = BUTTON_HEIGHT
+
+-- The button labels point at font objects of this addon's own rather than at
+-- GameFontNormalSmall directly. Every label that shares an object follows it
+-- when its size changes, so resizing the text is one call and not a walk over
+-- 256 buttons.
+--
+-- Two objects, because a Button swaps to its highlight font under the mouse.
+-- Setting both is also what stops the label changing size as the pointer
+-- passes over it, which the template's own defaults would have done.
+local MIN_FONT_SIZE, MAX_FONT_SIZE = 8, 18
+
+-- The face and flags of a stock font object, falling back to the client's
+-- standard font if it cannot be read -- a font object with no font set at all
+-- renders nothing, so there has to be an answer here.
+local function FontFaceOf(name)
+    local source = _G[name]
+    if source and source.GetFont then
+        local file, height, flags = source:GetFont()
+        if file then return file, height, flags end
+    end
+    return _G.STANDARD_TEXT_FONT or "Fonts" .. string.char(92) .. "FRIZQT__.TTF", 10, ""
+end
+
+local _, measuredFontSize = FontFaceOf("GameFontNormalSmall")
+local DEFAULT_FONT_SIZE = math.floor((measuredFontSize or 10) + 0.5)
+if DEFAULT_FONT_SIZE < MIN_FONT_SIZE or DEFAULT_FONT_SIZE > MAX_FONT_SIZE then
+    DEFAULT_FONT_SIZE = 10
+end
+EmoteMenu.FontSize = DEFAULT_FONT_SIZE
+EmoteMenu.DEFAULT_FONT_SIZE = DEFAULT_FONT_SIZE
+
+local function MakeButtonFont(name, sourceName, r, g, b)
+    if not CreateFont then return nil end
+    local font = CreateFont(name)
+    local source = _G[sourceName]
+    if source and source.GetFont and font.SetFontObject then
+        -- Brings the colour, shadow and justification across; only the size is
+        -- ours to set.
+        font:SetFontObject(source)
+    elseif font.SetTextColor then
+        font:SetTextColor(r, g, b)
+    end
+    return font
+end
+
+local ButtonFont = MakeButtonFont("EmoteMenuButtonFont", "GameFontNormalSmall", 1, 0.82, 0)
+local ButtonFontHigh = MakeButtonFont("EmoteMenuButtonFontHighlight",
+    "GameFontHighlightSmall", 1, 1, 1)
+
+local function ApplyFontSize()
+    local size = EmoteMenu.FontSize
+    if ButtonFont then
+        local file, _, flags = FontFaceOf("GameFontNormalSmall")
+        ButtonFont:SetFont(file, size, flags)
+    end
+    if ButtonFontHigh then
+        local file, _, flags = FontFaceOf("GameFontHighlightSmall")
+        ButtonFontHigh:SetFont(file, size, flags)
+    end
+end
+ApplyFontSize()
+EmoteMenu.ApplyFontSize = ApplyFontSize
 -- 11px is a compromise: large enough for the speaker cone to survive
 -- downsampling, small enough that two of them plus the longest label
 -- ('congratulate') still fit across a button.
@@ -1494,16 +1556,29 @@ local function MakeCheck(text, tip, onClick)
     return c
 end
 
--- Label on the left, live value on the right, track underneath.
+-- Label on the left, the number on the right, track underneath. The number is
+-- an edit box rather than a label: a slider is quick but vague, and anyone who
+-- knows they want 120 should not have to hunt for it with the mouse.
 local function MakeSlider(text, tip, minValue, maxValue, apply)
     local row = CreateFrame("Frame", nil, Options)
 
     row.label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    row.label:SetPoint("TOPLEFT", 0, 0)
+    row.label:SetPoint("TOPLEFT", 0, -3)
     row.label:SetText(text)
 
-    row.value = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-    row.value:SetPoint("TOPRIGHT", 0, 0)
+    local box = CreateFrame("EditBox", nil, row)
+    box:SetPoint("TOPRIGHT", 0, 0)
+    box:SetSize(40, 18)
+    box:SetAutoFocus(false)
+    box:SetNumeric(true)
+    box:SetMaxLetters(3)
+    box:SetJustifyH("CENTER")
+    box:SetFontObject("GameFontHighlightSmall")
+    box:SetTextInsets(3, 3, 0, 0)
+    box.bg = box:CreateTexture(nil, "BACKGROUND")
+    box.bg:SetAllPoints()
+    box.bg:SetColorTexture(1, 1, 1, 0.08)
+    row.box = box
 
     local slider = CreateFrame("Slider", nil, row)
     slider:SetOrientation("HORIZONTAL")
@@ -1529,12 +1604,47 @@ local function MakeSlider(text, tip, minValue, maxValue, apply)
     -- button one and a half pixels wider is not a thing worth allowing.
     slider:SetScript("OnValueChanged", function(_, value)
         value = math.floor(value + 0.5)
-        row.value:SetText(tostring(value))
+        -- Not while it is being typed in: the box is the one place the player
+        -- is allowed to hold a value the setting has not taken yet.
+        if not box:HasFocus() then box:SetText(tostring(value)) end
         apply(value)
     end)
     AddTip(slider, text, tip)
 
     row.slider = slider
+
+    function row:Set(value)
+        value = math.floor(value + 0.5)
+        self.slider:SetValue(value)
+        self.box:SetText(tostring(math.floor(self.slider:GetValue() + 0.5)))
+    end
+
+    -- Guarded against itself: committing clears the focus, and losing focus
+    -- commits.
+    local committing = false
+    local function Commit()
+        if committing then return end
+        committing = true
+        local typed = tonumber(box:GetText())
+        if typed then
+            slider:SetValue(math.max(minValue, math.min(maxValue,
+                math.floor(typed + 0.5))))
+        end
+        -- Redrawn from the value that won either way, so an out-of-range or
+        -- unparseable entry cannot sit in the box looking accepted.
+        row:Set(slider:GetValue())
+        box:ClearFocus()
+        committing = false
+    end
+
+    box:SetScript("OnEnterPressed", Commit)
+    box:SetScript("OnEditFocusLost", Commit)
+    box:SetScript("OnEscapePressed", function()
+        row:Set(slider:GetValue())
+        box:ClearFocus()
+    end)
+    AddTip(box, text, "Type a number and press Enter.")
+
     return row
 end
 
@@ -1566,8 +1676,16 @@ local HeightSlider = MakeSlider("Height", "How tall each emote button is.",
         EmoteMenu.ButtonH = value
         ApplyButtonSize()
     end)
-Place(WidthSlider, 0, 32, 10, true)
-Place(HeightSlider, 0, 32, 14, true)
+local FontSlider = MakeSlider("Text", "The size of the text on the emote "
+    .. "buttons. The rest of the panel is left alone.",
+    MIN_FONT_SIZE, MAX_FONT_SIZE, function(value)
+        if EmoteMenu.FontSize == value then return end
+        EmoteMenu.FontSize = value
+        ApplyFontSize()
+    end)
+Place(WidthSlider, 0, 36, 10, true)
+Place(HeightSlider, 0, 36, 10, true)
+Place(FontSlider, 0, 36, 14, true)
 
 AddHeading("Behaviour")
 local EscapeCheck = MakeCheck("Escape closes the menu",
@@ -1596,6 +1714,7 @@ Place(MinimapCheck, 8, 16, 14)
 -- would be a nasty surprise.
 local function ResetToDefaults()
     EmoteMenu.ButtonW, EmoteMenu.ButtonH = BUTTON_WIDTH, BUTTON_HEIGHT
+    EmoteMenu.FontSize = DEFAULT_FONT_SIZE
     EmoteMenu.SortOrder = "across"
     EmoteMenu.EscapeCloses = "On"
     EmoteMenu.ShowMinimapIcon = "On"
@@ -1604,6 +1723,7 @@ local function ResetToDefaults()
     EmoteMenu.MainPanelX, EmoteMenu.MainPanelY = 0, 0
 
     SetEscapeCloses(true)
+    ApplyFontSize()
     if EmoteMenu.SetMinimapIconShown then EmoteMenu:SetMinimapIconShown() end
     PageF:ClearAllPoints()
     PageF:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -1645,8 +1765,9 @@ function EmoteMenu:RefreshOptions()
     SortDown.tick:SetShown(self.SortOrder == "down")
     EscapeCheck.tick:SetShown(self.EscapeCloses == "On")
     MinimapCheck.tick:SetShown(self.ShowMinimapIcon == "On")
-    WidthSlider.slider:SetValue(self.ButtonW)
-    HeightSlider.slider:SetValue(self.ButtonH)
+    WidthSlider:Set(self.ButtonW)
+    HeightSlider:Set(self.ButtonH)
+    FontSlider:Set(self.FontSize)
 end
 
 Options:SetScript("OnShow", function() EmoteMenu:RefreshOptions() end)
@@ -1655,7 +1776,7 @@ Options:SetScript("OnShow", function() EmoteMenu:RefreshOptions() end)
 -- the drag handle, so anything up there has to stay out of the way.
 local OptionsButton = CreateFrame("Button", nil, PageF)
 OptionsButton:SetSize(16, 16)
-OptionsButton:SetPoint("TOPRIGHT", -32, -8)
+OptionsButton:SetPoint("TOPRIGHT", -40, -8)
 OptionsButton:SetNormalTexture(TEXTURE_PATH .. "cog.tga")
 OptionsButton:SetHighlightTexture(TEXTURE_PATH .. "cog.tga")
 -- Dimmed until the mouse is on it, where the additive highlight brings it
@@ -1731,7 +1852,13 @@ local function BuildEmoteButtons()
         -- Parented to the scroll child, not the panel, so they scroll with it.
         -- Positions are left to Reflow(), which depends on the current width.
         local eBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
-        eBtn:SetNormalFontObject("GameFontNormalSmall")
+        if ButtonFont then
+            eBtn:SetNormalFontObject(ButtonFont)
+            eBtn:SetHighlightFontObject(ButtonFontHigh or ButtonFont)
+            eBtn:SetDisabledFontObject(ButtonFont)
+        else
+            eBtn:SetNormalFontObject("GameFontNormalSmall")
+        end
         eBtn:SetSize(EmoteMenu.ButtonW, EmoteMenu.ButtonH)
         eBtn:SetText(emoteString)
         eBtn.entry = entry
@@ -1933,6 +2060,8 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         -- Appearance
         EmoteMenu:LoadVarNum("ButtonW", BUTTON_WIDTH, MIN_BUTTON_W, MAX_BUTTON_W)
         EmoteMenu:LoadVarNum("ButtonH", BUTTON_HEIGHT, MIN_BUTTON_H, MAX_BUTTON_H)
+        EmoteMenu:LoadVarNum("FontSize", DEFAULT_FONT_SIZE, MIN_FONT_SIZE, MAX_FONT_SIZE)
+        ApplyFontSize()
         EmoteMenu:LoadVarSet("SortOrder", "across", VALID_SORTS)
         EmoteMenu:LoadVarChk("EscapeCloses", "On")
         SetEscapeCloses(EmoteMenu.EscapeCloses == "On")
@@ -1959,6 +2088,7 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         EmoteMenuDB.PanelH = EmoteMenu.PanelH
         EmoteMenuDB.ButtonW = EmoteMenu.ButtonW
         EmoteMenuDB.ButtonH = EmoteMenu.ButtonH
+        EmoteMenuDB.FontSize = EmoteMenu.FontSize
         EmoteMenuDB.SortOrder = EmoteMenu.SortOrder
         EmoteMenuDB.EscapeCloses = EmoteMenu.EscapeCloses
         EmoteMenuDB.DefaultTab = EmoteMenu.DefaultTab

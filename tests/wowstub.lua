@@ -199,7 +199,56 @@ function frameMeta:GetScrollChild() return self.scrollChild end
 function frameMeta:SetVerticalScroll(v) self.vscroll = v end
 function frameMeta:GetVerticalScroll() return self.vscroll or 0 end
 
+-- Fonts. A font object is shared by every label pointed at it, so resizing one
+-- resizes all of them -- which is exactly what the text-size setting relies on.
+local fontMeta = {}
+fontMeta.__index = fontMeta
+function fontMeta:SetFont(file, height, flags)
+    assert(file, "SetFont with no font file")
+    self.file, self.height, self.flags = file, height, flags
+    return true
+end
+function fontMeta:GetFont() return self.file, self.height, self.flags end
+function fontMeta:SetFontObject(o)
+    if type(o) == "table" and o.GetFont then
+        self.file, self.height, self.flags = o:GetFont()
+    end
+end
+function fontMeta:SetTextColor(r, g, b) self.color = { r, g, b } end
+function fontMeta:GetTextColor()
+    local c = self.color or { 1, 1, 1 }
+    return c[1], c[2], c[3]
+end
+function fontMeta:SetShadowOffset() end
+function fontMeta:SetShadowColor() end
+function fontMeta:SetJustifyH() end
+
+function _G.CreateFont(name)
+    local f = setmetatable({ name = name, file = "Fonts/FRIZQT__.TTF",
+                             height = 10, flags = "" }, fontMeta)
+    if name then _G[name] = f end
+    return f
+end
+
+_G.STANDARD_TEXT_FONT = "Fonts/FRIZQT__.TTF"
+for name, height in pairs({ GameFontNormal = 12, GameFontNormalSmall = 10,
+                            GameFontNormalLarge = 16, GameFontHighlight = 12,
+                            GameFontHighlightSmall = 10, GameFontDisable = 12,
+                            GameFontDisableSmall = 10 }) do
+    CreateFont(name).height = height
+end
+
+-- Buttons keep the font objects they are given so tests can see which one a
+-- label is following.
+function frameMeta:SetNormalFontObject(o) self.normalFont = o end
+function frameMeta:SetHighlightFontObject(o) self.highlightFont = o end
+function frameMeta:SetDisabledFontObject(o) self.disabledFont = o end
+
 -- EditBox
+function frameMeta:SetNumeric(v) self.numeric = v end
+function frameMeta:EnterPressed()
+    if self.scripts.OnEnterPressed then self.scripts.OnEnterPressed(self) end
+end
 function frameMeta:SetAutoFocus(v) self.autoFocus = v end
 function frameMeta:HasFocus() return self.focused == true end
 function frameMeta:SetFocus() self.focused = true end
@@ -243,7 +292,7 @@ stubMethods(frameMeta, {
     "SetAllPoints", "SetColorTexture", "SetFrameStrata",
     "SetFrameLevel", "SetClampedToScreen", "EnableMouse", "SetMovable",
     "RegisterForDrag", "RegisterForClicks", "StartMoving", "StopMovingOrSizing",
-    "StartSizing", "SetUserPlaced", "SetNormalFontObject", "SetHighlightFontObject",
+    "StartSizing", "SetUserPlaced",
     "SetJustifyH", "SetJustifyV", "SetNonSpaceWrap", "SetAlpha", "SetScale",
     "SetNormalTexture", "SetPushedTexture", "SetHighlightTexture",
     "SetDisabledTexture", "GetNormalTexture", "SetParent", "Raise", "SetToplevel",

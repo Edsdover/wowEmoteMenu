@@ -7,9 +7,10 @@
 - **An options panel**, opened from the cog at the top right of the menu.
   - **Order.** The list runs A to Z across the rows, or A to Z down the
     columns.
-  - **Button size.** Two sliders, one for width and one for height. Wider
-    buttons mean fewer columns in the same panel, and the grid reflows as the
-    slider moves.
+  - **Button size.** Three sliders: width, height and text size. Wider buttons
+    mean fewer columns in the same panel, and the grid reflows as the slider
+    moves. Every slider's number is an edit box too, so a value can be typed
+    straight in rather than hunted for with the mouse.
   - **Escape closes the menu**, which can now be turned off by anyone who wants
     to leave the menu parked on screen.
   - **Show the minimap icon.** This setting has existed since the first release
