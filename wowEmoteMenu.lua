@@ -102,14 +102,44 @@ end
 ----------------------------------------------------------------------
 -- Main frame
 ----------------------------------------------------------------------
-local FRAME_WIDTH = 870
-local FRAME_HEIGHT = 540
+local DEFAULT_COLUMNS = 10
+local DEFAULT_HEIGHT = 540
 
 local BUTTON_WIDTH = 85
 local BUTTON_HEIGHT = 18
-local BUTTONS_PER_ROW = 10
-local MARGIN_LEFT = 10
-local MARGIN_TOP = 60
+
+local MARGIN_LEFT = 10          -- gap between the panel edge and the grid
+local MARGIN_BOTTOM = 10
+local CONTENT_TOP = 60          -- room for the title and version text
+local SCROLLBAR_WIDTH = 12
+local SCROLLBAR_GAP = 4
+
+local MIN_COLUMNS = 3
+-- Narrow enough to be genuinely useful docked at the side of the screen, but
+-- never so narrow that a button label has nowhere to go.
+local MIN_WIDTH = (BUTTON_WIDTH * MIN_COLUMNS) + (MARGIN_LEFT * 2) + SCROLLBAR_WIDTH + SCROLLBAR_GAP
+local MIN_HEIGHT = CONTENT_TOP + (BUTTON_HEIGHT * 4) + MARGIN_BOTTOM
+local MAX_WIDTH, MAX_HEIGHT = 2400, 1600
+
+-- Opening width is derived so the grid still shows DEFAULT_COLUMNS columns
+-- now that the scrollbar has to be accounted for.
+local DEFAULT_WIDTH = (BUTTON_WIDTH * DEFAULT_COLUMNS) + (MARGIN_LEFT * 2)
+    + SCROLLBAR_WIDTH + SCROLLBAR_GAP
+
+EmoteMenu.PanelW = DEFAULT_WIDTH
+EmoteMenu.PanelH = DEFAULT_HEIGHT
+
+-- The .toc targets Classic Era (11509) and Forever (16001), which are different
+-- API generations: SetMinResize/SetMaxResize were removed in 10.0 and replaced
+-- by SetResizeBounds, so the addon has to cope with either.
+local function SetResizeLimits(frame, minW, minH, maxW, maxH)
+    if frame.SetResizeBounds then
+        frame:SetResizeBounds(minW, minH, maxW, maxH)
+    elseif frame.SetMinResize then
+        frame:SetMinResize(minW, minH)
+        frame:SetMaxResize(maxW, maxH)
+    end
+end
 
 local PageF = CreateFrame("Frame", "EmoteMenuFrame", UIParent)
 EmoteMenu.PageF = PageF
@@ -118,12 +148,14 @@ EmoteMenu.PageF = PageF
 -- by name in _G, so the frame has to be named (it is, above).
 table.insert(UISpecialFrames, "EmoteMenuFrame")
 
-PageF:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
+PageF:SetSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
 PageF:Hide()
 PageF:SetFrameStrata("HIGH")
 PageF:SetClampedToScreen(true)
 PageF:EnableMouse(true)
 PageF:SetMovable(true)
+PageF:SetResizable(true)
+SetResizeLimits(PageF, MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT)
 PageF:RegisterForDrag("LeftButton")
 PageF:SetScript("OnDragStart", PageF.StartMoving)
 PageF:SetScript("OnDragStop", function(self)
@@ -162,24 +194,154 @@ CloseB:SetSize(30, 30)
 CloseB:SetPoint("TOPRIGHT", 0, 0)
 
 ----------------------------------------------------------------------
+-- Scrolling viewport
+----------------------------------------------------------------------
+-- Deliberately built from bare ScrollFrame and Slider widgets rather than a
+-- Blizzard template. Templates come and go between API generations and this
+-- addon targets two of them; these core widget types exist in both.
+
+local ScrollF = CreateFrame("ScrollFrame", nil, PageF)
+ScrollF:SetPoint("TOPLEFT", MARGIN_LEFT, -CONTENT_TOP)
+ScrollF:SetPoint("BOTTOMRIGHT", -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP), MARGIN_BOTTOM)
+
+local ScrollChild = CreateFrame("Frame", nil, ScrollF)
+ScrollChild:SetSize(1, 1)
+ScrollF:SetScrollChild(ScrollChild)
+
+local ScrollBar = CreateFrame("Slider", nil, PageF)
+ScrollBar:SetOrientation("VERTICAL")
+ScrollBar:SetWidth(SCROLLBAR_WIDTH)
+ScrollBar:SetPoint("TOPLEFT", ScrollF, "TOPRIGHT", SCROLLBAR_GAP, 0)
+ScrollBar:SetPoint("BOTTOMLEFT", ScrollF, "BOTTOMRIGHT", SCROLLBAR_GAP, 0)
+ScrollBar:SetValueStep(1)
+ScrollBar:SetObeyStepOnDrag(true)
+ScrollBar:Hide()
+
+ScrollBar.track = ScrollBar:CreateTexture(nil, "BACKGROUND")
+ScrollBar.track:SetAllPoints()
+ScrollBar.track:SetColorTexture(1, 1, 1, 0.07)
+
+ScrollBar.thumb = ScrollBar:CreateTexture(nil, "ARTWORK")
+ScrollBar.thumb:SetColorTexture(1, 1, 1, 0.30)
+ScrollBar.thumb:SetSize(SCROLLBAR_WIDTH, 40)
+ScrollBar:SetThumbTexture(ScrollBar.thumb)
+
+ScrollBar:SetScript("OnValueChanged", function(self, value)
+    ScrollF:SetVerticalScroll(value)
+end)
+
+ScrollF:EnableMouseWheel(true)
+ScrollF:SetScript("OnMouseWheel", function(_, delta)
+    if not ScrollBar:IsShown() then return end
+    local _, maxScroll = ScrollBar:GetMinMaxValues()
+    local step = BUTTON_HEIGHT * 3
+    local target = ScrollBar:GetValue() - (delta * step)
+    ScrollBar:SetValue(math.max(0, math.min(target, maxScroll)))
+end)
+
+----------------------------------------------------------------------
+-- Resize grip
+----------------------------------------------------------------------
+local Grip = CreateFrame("Button", nil, PageF)
+Grip:SetSize(16, 16)
+Grip:SetPoint("BOTTOMRIGHT", -2, 2)
+Grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+Grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+Grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+
+Grip:SetScript("OnMouseDown", function()
+    PageF:StartSizing("BOTTOMRIGHT")
+end)
+Grip:SetScript("OnMouseUp", function()
+    PageF:StopMovingOrSizing()
+    EmoteMenu.PanelW = math.floor(PageF:GetWidth() + 0.5)
+    EmoteMenu.PanelH = math.floor(PageF:GetHeight() + 0.5)
+end)
+
+----------------------------------------------------------------------
 -- Emote buttons
 ----------------------------------------------------------------------
 -- Show the tooltip for an emote button. Anchored to the panel rather than the
 -- button, flipping to whichever side of the panel has room for it.
+-- Anchors to PageF explicitly: the buttons' parent is the scroll child, which
+-- is taller than the visible area and scrolls out of view.
 local function ShowTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_NONE")
-    local parent = self:GetParent()
-    local pscale = parent:GetEffectiveScale()
+    local pscale = PageF:GetEffectiveScale()
     local gscale = UIParent:GetEffectiveScale()
     local tscale = GameTooltip:GetEffectiveScale()
-    local gap = (UIParent:GetRight() * gscale) - (parent:GetRight() * pscale)
+    local gap = (UIParent:GetRight() * gscale) - (PageF:GetRight() * pscale)
     if gap < (250 * tscale) then
-        GameTooltip:SetPoint("TOPRIGHT", parent, "TOPLEFT", 0, 0)
+        GameTooltip:SetPoint("TOPRIGHT", PageF, "TOPLEFT", 0, 0)
     else
-        GameTooltip:SetPoint("TOPLEFT", parent, "TOPRIGHT", 0, 0)
+        GameTooltip:SetPoint("TOPLEFT", PageF, "TOPRIGHT", 0, 0)
     end
     GameTooltip:SetText(self.tiptext, nil, nil, nil, nil, true)
 end
+
+----------------------------------------------------------------------
+-- Layout
+----------------------------------------------------------------------
+-- How many columns fit, and how many rows that needs. Kept free of any frame
+-- lookups so the arithmetic can be exercised on its own.
+local function ComputeGrid(viewportWidth, count)
+    local columns = math.floor(viewportWidth / BUTTON_WIDTH)
+    if columns < 1 then columns = 1 end
+    local rows = math.ceil(count / columns)
+    return columns, rows
+end
+EmoteMenu.ComputeGrid = ComputeGrid
+
+local buttons = {}
+local layoutColumns = 0
+
+-- Show the scrollbar only when the content actually overflows, and keep the
+-- current scroll offset inside the new range when the panel grows.
+local function UpdateScrollRange()
+    local viewportHeight = ScrollF:GetHeight()
+    local contentHeight = ScrollChild:GetHeight()
+    local maxScroll = contentHeight - viewportHeight
+    if maxScroll < 1 then
+        ScrollBar:SetMinMaxValues(0, 0)
+        ScrollBar:SetValue(0)
+        ScrollBar:Hide()
+        ScrollF:SetVerticalScroll(0)
+        return
+    end
+    ScrollBar:SetMinMaxValues(0, maxScroll)
+    ScrollBar:Show()
+    -- Proportional thumb, floored so it stays grabbable on a long list.
+    local visibleFraction = viewportHeight / contentHeight
+    ScrollBar.thumb:SetHeight(math.max(20, viewportHeight * visibleFraction))
+    if ScrollBar:GetValue() > maxScroll then
+        ScrollBar:SetValue(maxScroll)
+    end
+end
+
+-- Reposition the buttons for the current width. The column count is the only
+-- thing that can change their positions, so a resize that does not cross a
+-- column boundary skips the loop entirely -- OnSizeChanged fires continuously
+-- while dragging the grip.
+local function Reflow()
+    if #buttons == 0 then return end
+
+    local viewportWidth = ScrollF:GetWidth()
+    local columns, rows = ComputeGrid(viewportWidth, #buttons)
+
+    if columns ~= layoutColumns then
+        layoutColumns = columns
+        for i, button in ipairs(buttons) do
+            local column = (i - 1) % columns
+            local row = math.floor((i - 1) / columns)
+            button:ClearAllPoints()
+            button:SetPoint("TOPLEFT", column * BUTTON_WIDTH, -row * BUTTON_HEIGHT)
+        end
+        ScrollChild:SetSize(columns * BUTTON_WIDTH, rows * BUTTON_HEIGHT)
+    end
+
+    UpdateScrollRange()
+end
+EmoteMenu.Reflow = Reflow
 
 -- Build the emote grid. Deferred until the first time the panel is shown so
 -- the frames are never created for players who never open the menu.
@@ -193,15 +355,14 @@ local function BuildEmoteButtons()
 
     for i, entry in ipairs(sortedList) do
         local emoteString = entry.emote
-        -- Reset x every BUTTONS_PER_ROW buttons, step y down one row
-        local btnPosX = BUTTON_WIDTH * ((i - 1) % BUTTONS_PER_ROW) + MARGIN_LEFT
-        local btnPosY = -BUTTON_HEIGHT * math.floor((i - 1) / BUTTONS_PER_ROW) - MARGIN_TOP
 
-        local eBtn = CreateFrame("Button", nil, PageF, "UIPanelButtonTemplate")
+        -- Parented to the scroll child, not the panel, so they scroll with it.
+        -- Positions are left to Reflow(), which depends on the current width.
+        local eBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
         eBtn:SetNormalFontObject("GameFontNormalSmall")
         eBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
-        eBtn:SetPoint("TOPLEFT", btnPosX, btnPosY)
         eBtn:SetText(emoteString)
+        buttons[i] = eBtn
 
         -- Some emotes have no targeted form. Force no target and drop the
         -- second tooltip line for those.
@@ -222,11 +383,22 @@ local function BuildEmoteButtons()
     end
 end
 
--- Position the panel and build its contents when it is shown
+-- Reflow while the grip is dragged. Guarded on the buttons existing because
+-- this also fires during the SetSize call at load, long before that.
+PageF:SetScript("OnSizeChanged", function()
+    if buttonsBuilt then Reflow() end
+end)
+
+-- Restore size and position, then build and lay out the contents
 PageF:SetScript("OnShow", function(self)
-    BuildEmoteButtons()
+    self:SetSize(EmoteMenu.PanelW, EmoteMenu.PanelH)
     self:ClearAllPoints()
     self:SetPoint(EmoteMenu.MainPanelA, UIParent, EmoteMenu.MainPanelR, EmoteMenu.MainPanelX, EmoteMenu.MainPanelY)
+    BuildEmoteButtons()
+    -- Force a pass: the column count may be unchanged from last time while the
+    -- height, and so the scroll range, is not.
+    layoutColumns = 0
+    Reflow()
 end)
 
 ----------------------------------------------------------------------
@@ -311,6 +483,9 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         EmoteMenu:LoadVarAnc("MainPanelR", "CENTER")            -- Panel relative
         EmoteMenu:LoadVarNum("MainPanelX", 0, -5000, 5000)      -- Panel X axis
         EmoteMenu:LoadVarNum("MainPanelY", 0, -5000, 5000)      -- Panel Y axis
+        -- Panel size
+        EmoteMenu:LoadVarNum("PanelW", DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH)
+        EmoteMenu:LoadVarNum("PanelH", DEFAULT_HEIGHT, MIN_HEIGHT, MAX_HEIGHT)
 
         EmoteMenu:CreateMiniMapIcon()
 
@@ -325,5 +500,7 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         EmoteMenuDB.MainPanelR = EmoteMenu.MainPanelR
         EmoteMenuDB.MainPanelX = EmoteMenu.MainPanelX
         EmoteMenuDB.MainPanelY = EmoteMenu.MainPanelY
+        EmoteMenuDB.PanelW = EmoteMenu.PanelW
+        EmoteMenuDB.PanelH = EmoteMenu.PanelH
     end
 end)
