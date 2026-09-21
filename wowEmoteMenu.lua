@@ -373,6 +373,26 @@ EditToggle:SetSize(70, TAB_HEIGHT)
 EditToggle:SetPoint("TOPRIGHT", -MARGIN_LEFT, -34)
 EditToggle:SetText("Edit")
 
+-- Explains the mode before it is entered, and carries the persistence warning
+-- where the decision is actually made rather than only in chat.
+EditToggle:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText(EditMode and "Finish editing" or "Edit this tab")
+    GameTooltip:AddLine(
+        "Click emotes to add or remove them from this tab. They are not "
+        .. "performed while editing, so a stray click is harmless.",
+        0.8, 0.8, 0.8, true)
+    if not EmoteMenu.settingsRestored then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Changes will be lost when you reload.", 1, 0.5, 0.25, true)
+        GameTooltip:AddLine(
+            "This client is not restoring addon settings. It affects every "
+            .. "addon, not just this one.", 0.7, 0.7, 0.7, true)
+    end
+    GameTooltip:Show()
+end)
+EditToggle:SetScript("OnLeave", GameTooltip_Hide)
+
 local EditBanner = PageF:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 EditBanner:SetPoint("LEFT", SearchBox, "LEFT", 4, 0)
 EditBanner:SetPoint("RIGHT", SearchBox, "RIGHT", -4, 0)
@@ -414,8 +434,14 @@ local function RefreshTabs()
     SearchBox:SetShown(not EditMode)
     if EditMode then
         local tab = TabById(ActiveTab)
-        EditBanner:SetText(("|cffffd100Editing %s|r  -- click emotes to add or remove")
-            :format(tab and tab.label or ActiveTab))
+        local text = ("|cffffd100Editing %s|r  -- click emotes to add or remove")
+            :format(tab and tab.label or ActiveTab)
+        -- On screen for as long as the curating lasts, which a chat line
+        -- is not: chat scrolls away and is easily missed entirely.
+        if not EmoteMenu.settingsRestored then
+            text = text .. "   |cffff7f3fchanges will be lost on reload|r"
+        end
+        EditBanner:SetText(text)
     end
 end
 

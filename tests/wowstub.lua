@@ -24,8 +24,13 @@ _G.GameTooltip = {
     SetText = function(self, text)
         assert(type(text) == "string", "GameTooltip:SetText got " .. type(text))
         _G.__tooltipText = text
+        _G.__tooltipLines = { text }
     end,
-    AddLine = function() end,
+    AddLine = function(self, text)
+        _G.__tooltipLines = _G.__tooltipLines or {}
+        table.insert(_G.__tooltipLines, tostring(text))
+    end,
+    Show = function() end,
     Hide = function() end,
 }
 function _G.GameTooltip_Hide() end

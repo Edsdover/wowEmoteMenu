@@ -538,6 +538,29 @@ if row:
     check("right-click adds to the tab",
           L.eval('__core.EmoteMenu:TabContains("favourites", "dance")') is True)
 
+# The persistence warning has to be somewhere it cannot be missed, because a
+# chat line scrolls away.
+FAV.Click(FAV)
+ET = edit_toggle()
+ET.Enter(ET)
+tip = L.eval("""(function()
+    return table.concat(__tooltipLines or {}, " | ")
+end)()""")
+check("edit tooltip explains the mode",
+      "performed while editing" in tip, tip[:90])
+check("edit tooltip warns changes will be lost",
+      "lost when you reload" in tip, tip[:120])
+ET.Leave(ET)
+
+ET.Click(ET)
+banner = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.text and f.text:find("Editing") then return f.text end
+    end
+end)()""")
+check("edit banner carries the warning too", "lost on reload" in (banner or ""), repr(banner))
+ET = edit_toggle(); ET.Click(ET)
+
 # Searching inside a tab narrows within it, it does not escape it.
 FAV.Click(FAV)
 SB.Type(SB, "wave")
