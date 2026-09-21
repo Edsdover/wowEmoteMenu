@@ -2396,12 +2396,10 @@ end
 -- this addon deliberately creates is here. It is prefixed for the same reason
 -- every other name is: a bare Toggle() in _G would be asking for a collision.
 --
--- These two strings are what the game's Key Bindings panel shows, looked up
--- from the header and binding names in the XML. They have to match it exactly,
--- which the test suite checks, because a typo shows up as a blank row rather
--- than an error.
-_G.BINDING_HEADER_EMOTEMENU = "Emote Menu"
-_G.BINDING_NAME_EMOTEMENU_TOGGLE = "Show or hide the menu"
+-- The label the game's Key Bindings panel shows, looked up from the binding
+-- name in the XML. It has to match exactly, which the test suite checks,
+-- because a mismatch shows up as a raw key or a blank row rather than an error.
+_G.BINDING_NAME_EMOTEMENU_TOGGLE = "Open Emote Menu"
 
 function _G.EmoteMenu_Toggle()
     EmoteMenu:Toggle()

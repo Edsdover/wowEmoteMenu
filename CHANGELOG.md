@@ -17,7 +17,7 @@
     with no way to reach it. There is now a tick box for it.
   - **Reset to defaults**, which puts the panel size, position and appearance
     back the way they shipped. Tabs and favourites are deliberately left alone.
-- **A key binding.** Under `Emote Menu` in the game's own Key Bindings panel,
+- **A key binding.** `Open Emote Menu`, in the game's own Key Bindings panel,
   so the menu no longer has to be reached through the minimap or a slash
   command.
 - **Right-click the minimap icon for the options**, without opening the menu

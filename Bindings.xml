@@ -1,9 +1,15 @@
 <Bindings>
-    <!-- The body runs in the global environment, so it calls a global the
-         addon defines rather than anything local to it. The names shown in
-         the game's Key Bindings panel come from the BINDING_HEADER_EMOTEMENU
-         and BINDING_NAME_* globals, set alongside the function. -->
-    <Binding name="EMOTEMENU_TOGGLE" header="EMOTEMENU">
+    <!-- One row, no header. A header here rendered as the literal string
+         HEADER_EMOTEMENU in the Forever beta: the panel looked its display
+         name up as BINDING_NAME_HEADER_EMOTEMENU rather than the
+         BINDING_HEADER_EMOTEMENU that every addon guide says to define, and
+         fell back to printing the key. One binding does not need a heading of
+         its own regardless.
+
+         The body runs in the global environment, so it calls a global the
+         addon defines rather than anything local to it. The name shown in the
+         panel comes from BINDING_NAME_EMOTEMENU_TOGGLE, set alongside it. -->
+    <Binding name="EMOTEMENU_TOGGLE" category="ADDONS">
         EmoteMenu_Toggle()
     </Binding>
 </Bindings>

@@ -19,7 +19,7 @@
 
 ### You can access the emote menu by clicking the minimap icon or by typing `/emotemenu` (short form: `/emm`)
 
-There is also a key binding for it, under **Emote Menu** in the game's Key
+There is also a key binding for it -- **Open Emote Menu**, in the game's Key
 Bindings panel. Right-clicking the minimap icon opens the options directly.
 
 

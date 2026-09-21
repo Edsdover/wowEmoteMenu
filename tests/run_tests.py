@@ -1536,17 +1536,16 @@ TOC = open(os.path.join(ADDON, "EmoteMenu.toc"), encoding="utf-8").read()
 check("Bindings.xml is listed in the toc", "Bindings.xml" in TOC)
 
 bind_name = _re.search(r'<Binding name="([^"]+)"', BINDINGS)
-bind_header = _re.search(r'header="([^"]+)"', BINDINGS)
 bind_body = _re.search(r'>\s*(\w+)\(\)\s*</Binding>', BINDINGS)
-check("the XML declares a binding, a header and a body",
-      bind_name and bind_header and bind_body,
-      BINDINGS[:120])
+check("the XML declares a binding and a body", bind_name and bind_body, BINDINGS[:120])
 check("the binding's name global is defined",
       f"BINDING_NAME_{bind_name.group(1)} =" in ADDON_SRC,
       f"BINDING_NAME_{bind_name.group(1)}")
-check("the header's name global is defined",
-      f"BINDING_HEADER_{bind_header.group(1)} =" in ADDON_SRC,
-      f"BINDING_HEADER_{bind_header.group(1)}")
+# A header row rendered as the literal string HEADER_EMOTEMENU in the Forever
+# beta, and one binding does not need a heading anyway. Kept out on purpose.
+check("no header is declared", "header=" not in BINDINGS, "header attribute is back")
+check("exactly one binding", BINDINGS.count("<Binding ") == 1,
+      BINDINGS.count("<Binding "))
 
 L17 = new_runtime("nil")
 L17.execute(f'''
@@ -1557,9 +1556,11 @@ end
 fn = bind_body.group(1)
 check(f"the function the XML calls exists: {fn}()",
       L17.eval(f"type(_G['{fn}'])") == "function", L17.eval(f"type(_G['{fn}'])"))
-check("the binding names are strings, not nil",
-      isinstance(L17.eval(f"_G.BINDING_NAME_{bind_name.group(1)}"), str)
-      and isinstance(L17.eval(f"_G.BINDING_HEADER_{bind_header.group(1)}"), str))
+check("the binding name is a string, not nil",
+      isinstance(L17.eval(f"_G.BINDING_NAME_{bind_name.group(1)}"), str))
+check("and it says what the binding does",
+      L17.eval(f"_G.BINDING_NAME_{bind_name.group(1)}") == "Open Emote Menu",
+      L17.eval(f"_G.BINDING_NAME_{bind_name.group(1)}"))
 
 check("the panel starts closed", L17.eval("EmoteMenuFrame:IsShown()") is False)
 L17.execute(f"_G['{fn}']()")
