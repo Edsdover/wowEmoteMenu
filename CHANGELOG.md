@@ -17,6 +17,12 @@
     with no way to reach it. There is now a tick box for it.
   - **Reset to defaults**, which puts the panel size, position and appearance
     back the way they shipped. Tabs and favourites are deliberately left alone.
+- **Filters for sound and animation.** Two toggles beside the search box,
+  carrying the same speaker and dancer the buttons do. Turn one on to see only
+  the emotes that have it, or both on for the emotes that have both. They reset
+  when you log out, so a filter cannot quietly outlive the session that set it.
+  While curating a tab both they and the search stop applying, since the whole
+  point of that mode is that every emote is there to pick from.
 - **Tabs can be renamed.** Press `Edit` and the tab's own name becomes a
   highlighted field with a pencil on it; type a new one and press Enter. `PvP` and `Raid` can be
   renamed as well as your own tabs, and a renamed tab keeps everything in it --

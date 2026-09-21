@@ -35,6 +35,10 @@ command, and the text the server prints -- so "sorry" finds `apologize` and
 **The little icons** on a button mean the emote plays a sound (the speaker) or
 an animation (the dancer). Every emote was checked in game one at a time.
 
+**The two toggles** beside the search box carry those same icons and narrow the
+list to emotes that have them. Turn both on and you get the emotes that have
+both. They reset when you log out.
+
 **Drag the bottom-right corner** to resize. The columns reflow to fit and a
 scrollbar appears only when it is needed.
 
@@ -90,8 +94,7 @@ addon can do about it. Tracked at
 
 ### TODO
 
-1. Filters for animated / voiced emotes
-2. Check `/mountspecial` once a mount is available -- it needs one to do
+1. Check `/mountspecial` once a mount is available -- it needs one to do
    anything, so it is currently marked as having no animation
 
 

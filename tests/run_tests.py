@@ -1384,6 +1384,147 @@ L15.execute("SlashCmdList['EMOTE_MENU']('')")
 check("the panel still opens with corrupt tab names",
       L15.eval("EmoteMenuFrame:IsShown()") is True)
 
+print("\n== 2j. the marker filters ==")
+# Expected counts come from an independent parse of the data file rather than
+# from the addon, so a filter that quietly stopped filtering would still fail.
+VIS = {t: f for t, f in store.items() if t not in UNIMPLEMENTED}
+WANT_VOICED = sum(1 for a, v in VIS.values() if v)
+WANT_ANIMATED = sum(1 for a, v in VIS.values() if a)
+WANT_BOTH = sum(1 for a, v in VIS.values() if a and v)
+print(f"  (visible store says: voiced={WANT_VOICED} animated={WANT_ANIMATED} both={WANT_BOTH})")
+
+L16 = new_runtime("nil")
+L16.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+L16.execute("SlashCmdList['EMOTE_MENU']('')")
+EM16 = L16.eval("__core.EmoteMenu")
+VOICE, ANIMATE = EM16.VoicedFilter, EM16.AnimatedFilter
+
+
+def shown16():
+    return L16.eval("""(function()
+        local n = 0
+        for _, f in ipairs(__frames) do
+            if f.entry ~= nil and f.shown then n = n + 1 end
+        end
+        return n
+    end)()""")
+
+
+def shown_all_have(field):
+    """Every visible button carries the flag the filter claims to select."""
+    return L16.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.entry ~= nil and f.shown and not f.entry.%s then return false end
+        end
+        return true
+    end)()""" % field)
+
+
+def count_text16():
+    return L16.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.frameType == "FontString" and f.text and f.text:find(" of ") then
+                return f.text
+            end
+        end
+    end)()""")
+
+
+def no_matches16():
+    return L16.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.text and f.text:find("match") and f.shown then return f.text end
+        end
+    end)()""")
+
+
+check("two filter toggles sit beside the search box",
+      VOICE is not None and ANIMATE is not None)
+check("they carry the same art as the markers",
+      VOICE.icon.texture.endswith("sound.tga")
+      and ANIMATE.icon.texture.endswith("animation.tga"),
+      f"{VOICE.icon.texture} / {ANIMATE.icon.texture}")
+check("they start off and dimmed",
+      VOICE.icon.vertexColor[4] < 1 and ANIMATE.icon.vertexColor[4] < 1)
+check("the grid starts unfiltered", shown16() == VISIBLE_COUNT, shown16())
+
+VOICE.Click(VOICE)
+check("the sound filter shows only emotes with a sound",
+      shown16() == WANT_VOICED, f"{shown16()} vs {WANT_VOICED}")
+check("and every one of them really has one", shown_all_have("voiced") is True)
+check("the toggle lights up when it is on", VOICE.icon.vertexColor[4] == 1)
+check("the count says how many are left", count_text16() ==
+      f"{WANT_VOICED} of {VISIBLE_COUNT}", count_text16())
+
+ANIMATE.Click(ANIMATE)
+check("both filters on means both flags, not either",
+      shown16() == WANT_BOTH, f"{shown16()} vs {WANT_BOTH}")
+check("and each of those has a sound", shown_all_have("voiced") is True)
+check("and an animation", shown_all_have("animated") is True)
+
+VOICE.Click(VOICE)
+check("turning the sound filter off leaves the animation one",
+      shown16() == WANT_ANIMATED, f"{shown16()} vs {WANT_ANIMATED}")
+check("and it really is the animated set", shown_all_have("animated") is True)
+
+# Search and filter narrow together.
+SB16 = L16.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.frameType == "EditBox" and f.parent == EmoteMenuFrame then return f end
+    end
+end)()""")
+SB16.SetText(SB16, "dance")
+check("a search on top of a filter narrows further",
+      0 < shown16() < WANT_ANIMATED, shown16())
+check("and what survives still has the animation", shown_all_have("animated") is True)
+
+SB16.SetText(SB16, "qqqqqq")
+check("a search matching nothing says so about the pair",
+      no_matches16() == "Nothing matches that search and filter.", no_matches16())
+SB16.SetText(SB16, "")
+
+ANIMATE.Click(ANIMATE)
+check("turning both off restores the full list", shown16() == VISIBLE_COUNT, shown16())
+check("and the count goes quiet again on the All tab", count_text16() is None,
+      count_text16())
+
+# An empty tab plus a filter explains which one is responsible.
+L16.execute('__core.EmoteMenu.SelectTab("favourites")')
+VOICE.Click(VOICE)
+check("a filter with no matches in the tab says that",
+      no_matches16() == "No emotes in this tab match that filter.", no_matches16())
+
+# Edit mode hides them, and they stop applying while hidden.
+ET16 = L16.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate"
+           and (f.text == "Edit" or f.text == "Done") then return f end
+    end
+end)()""")
+ET16.Click(ET16)
+check("edit mode hides the filters", VOICE.shown is False and ANIMATE.shown is False)
+check("and stops them filtering, so everything can be picked from",
+      shown16() == VISIBLE_COUNT, shown16())
+ET16.Click(ET16)
+check("leaving edit mode puts the filter back to work",
+      shown16() == 0 and VOICE.shown is True, shown16())
+VOICE.Click(VOICE)
+
+# Deliberately session-only: a filter that survived a reload would be a
+# mystery weeks later.
+L16.execute("""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("PLAYER_LOGOUT") then f:Fire("PLAYER_LOGOUT") end
+end
+""")
+check("the filters are not written to the DB",
+      L16.eval("EmoteMenuDB.FilterVoiced") is None
+      and L16.eval("EmoteMenuDB.FilterAnimated") is None)
+
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""
 local f = EmoteMenuFrame

@@ -458,6 +458,8 @@ EmoteMenu.ApplyFontSize = ApplyFontSize
 local MARKER_SIZE = 11
 local MARKER_GAP = 2
 local MARKER_AREA = (MARKER_SIZE * 2) + MARKER_GAP + 5
+local MARKER_SOUND = { 0.98, 0.82, 0.25 }   -- warm gold
+local MARKER_ANIM  = { 0.35, 0.78, 0.98 }   -- cool blue
 
 local MARGIN_LEFT = 10          -- gap between the panel edge and the grid
 local MARGIN_BOTTOM = 10
@@ -467,6 +469,11 @@ local TAB_GAP = 4
 local CONTENT_TOP = 92
 local SEARCH_HEIGHT = 20
 local COUNT_WIDTH = 92          -- 'showing 12 of 256' beside the search box
+-- The two marker filters, which sit in the gap the search box leaves when it
+-- stops growing.
+local FILTER_SIZE = 16
+local FILTER_GAP = 3
+local FILTER_AREA = (FILTER_SIZE * 2) + FILTER_GAP + 12
 -- A single-line field stretched across a wide panel looks like a mistake, so
 -- it stops growing well before the panel does. It still shrinks on a narrow
 -- one, where the space genuinely is scarce.
@@ -625,6 +632,11 @@ local CloseB = CreateFrame("Button", nil, PageF, "UIPanelCloseButton")
 CloseB:SetSize(30, 30)
 CloseB:SetPoint("TOPRIGHT", 0, 0)
 
+-- Declared here because the search box, the marker filters and the tab strip
+-- all re-run it, and every one of them is built above the definition. A later
+-- 'local' would shadow it with nil.
+local ApplyFilter
+
 ----------------------------------------------------------------------
 -- Search box
 ----------------------------------------------------------------------
@@ -637,7 +649,8 @@ local SearchBox = CreateFrame("EditBox", nil, PageF)
 local SEARCH_TOP = -(CONTENT_TOP - SEARCH_HEIGHT - 6)
 SearchBox:SetPoint("TOPLEFT", MARGIN_LEFT, SEARCH_TOP)
 SearchBox:SetPoint("TOPRIGHT",
-    -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP + COUNT_WIDTH), SEARCH_TOP)
+    -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP + COUNT_WIDTH + FILTER_AREA),
+    SEARCH_TOP)
 SearchBox:SetHeight(SEARCH_HEIGHT)
 SearchBox:SetAutoFocus(false)
 SearchBox:SetFontObject("GameFontHighlightSmall")
@@ -660,8 +673,87 @@ ClearSearch:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
 ClearSearch:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
 ClearSearch:Hide()
 
+----------------------------------------------------------------------
+-- Marker filters
+----------------------------------------------------------------------
+-- Two toggles carrying the same speaker and dancer as the buttons do, because
+-- the icons already mean something by the time anyone finds these. They answer
+-- a question the grid otherwise cannot -- "which of these make a sound?" --
+-- and the answer is data that was gathered by hand, one emote at a time, so it
+-- may as well be usable rather than only decorative.
+--
+-- Always the art rather than the bar fallback: at 16 pixels the shapes read
+-- clearly, which is the whole reason the fallback exists at 11.
+--
+-- Deliberately not saved. A filter that survives a reload is a filter someone
+-- will hit weeks later wondering where half their emotes went.
+
+local function MakeFilterToggle(file, colour, title, body)
+    local button = CreateFrame("Button", nil, PageF)
+    button:SetSize(FILTER_SIZE, FILTER_SIZE)
+    button.colour = colour
+
+    button.bg = button:CreateTexture(nil, "BACKGROUND")
+    button.bg:SetAllPoints()
+
+    button.icon = button:CreateTexture(nil, "ARTWORK")
+    button.icon:SetTexture(TEXTURE_PATH .. file)
+    button.icon:SetPoint("CENTER")
+    button.icon:SetSize(FILTER_SIZE - 4, FILTER_SIZE - 4)
+
+    button.title, button.body = title, body
+    button:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:SetText(self.title)
+        GameTooltip:AddLine(self.body, 0.8, 0.8, 0.8, true)
+        if EmoteMenu.FilterVoiced and EmoteMenu.FilterAnimated then
+            GameTooltip:AddLine("Both are on, so only emotes that have both "
+                .. "are shown.", 0.7, 0.7, 0.7, true)
+        end
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", GameTooltip_Hide)
+    return button
+end
+
+local VoicedFilter = MakeFilterToggle("sound.tga", MARKER_SOUND,
+    "Only emotes with a sound",
+    "Narrows the list to emotes that play a sound. Click again to show them all.")
+local AnimatedFilter = MakeFilterToggle("animation.tga", MARKER_ANIM,
+    "Only emotes with an animation",
+    "Narrows the list to emotes with an animation. Click again to show them all.")
+
+VoicedFilter:SetPoint("LEFT", SearchBox, "RIGHT", 6, 0)
+AnimatedFilter:SetPoint("LEFT", VoicedFilter, "RIGHT", FILTER_GAP, 0)
+
+-- Lit like the active tab is, so "on" means the same thing in both places.
+local function PaintFilter(button, on)
+    button.bg:SetColorTexture(1, 1, 1, on and 0.16 or 0.05)
+    local c = button.colour
+    button.icon:SetVertexColor(c[1], c[2], c[3], on and 1 or 0.45)
+end
+
+local function RefreshFilters()
+    PaintFilter(VoicedFilter, EmoteMenu.FilterVoiced)
+    PaintFilter(AnimatedFilter, EmoteMenu.FilterAnimated)
+end
+
+VoicedFilter:SetScript("OnClick", function()
+    EmoteMenu.FilterVoiced = not EmoteMenu.FilterVoiced
+    RefreshFilters()
+    ApplyFilter(SearchBox:GetText())
+end)
+AnimatedFilter:SetScript("OnClick", function()
+    EmoteMenu.FilterAnimated = not EmoteMenu.FilterAnimated
+    RefreshFilters()
+    ApplyFilter(SearchBox:GetText())
+end)
+RefreshFilters()
+
+EmoteMenu.VoicedFilter, EmoteMenu.AnimatedFilter = VoicedFilter, AnimatedFilter
+
 local CountLabel = PageF:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-CountLabel:SetPoint("LEFT", SearchBox, "RIGHT", 6, 0)
+CountLabel:SetPoint("LEFT", AnimatedFilter, "RIGHT", 6, 0)
 CountLabel:SetWidth(COUNT_WIDTH - 10)
 CountLabel:SetJustifyH("RIGHT")
 
@@ -938,7 +1030,7 @@ local function LayoutTabs()
     end
     local searchTop = -(TAB_TOP + tabRows * (TAB_HEIGHT + TAB_GAP) + 4)
     local room = PageF:GetWidth() - (MARGIN_LEFT * 2)
-        - SCROLLBAR_WIDTH - SCROLLBAR_GAP - COUNT_WIDTH
+        - SCROLLBAR_WIDTH - SCROLLBAR_GAP - COUNT_WIDTH - FILTER_AREA
     SearchBox:ClearAllPoints()
     SearchBox:SetPoint("TOPLEFT", MARGIN_LEFT, searchTop)
     SearchBox:SetWidth(math.max(80, math.min(SEARCH_MAX_WIDTH, room)))
@@ -1029,6 +1121,8 @@ local function RefreshTabs()
     EditBanner:SetPoint("RIGHT", DeleteTab, "LEFT", -8, 0)
     EditBanner:SetShown(EditMode)
     SearchBox:SetShown(not EditMode)
+    VoicedFilter:SetShown(not EditMode)
+    AnimatedFilter:SetShown(not EditMode)
     if EditMode then
         local tab = TabById(ActiveTab)
         local text = ("|cffffd100Editing %s|r  -- click emotes to add or remove")
@@ -1140,9 +1234,6 @@ end
 -- Both sit in the right-hand margin that BUTTON_WIDTH reserves, so they never
 -- overlap the label.
 
-local MARKER_SOUND = { 0.98, 0.82, 0.25 }   -- warm gold
-local MARKER_ANIM  = { 0.35, 0.78, 0.98 }   -- cool blue
-
 -- "icons" uses the speaker and dancer art in Textures/, "bars" falls back to
 -- shapes drawn from plain rectangles. Both exist because a texture file is the
 -- clearer picture but only if it survives being twelve pixels across; the bars
@@ -1198,11 +1289,10 @@ local function AddMarkers(button, entry)
     end
 end
 
--- Declared up front: the right-click menu below defines ShowEmoteMenu and
--- calls ApplyFilter, while the button OnClick calls both. Without these a
--- later 'local' would shadow the definition with nil.
+-- Declared up front: the right-click menu below defines ShowEmoteMenu, and the
+-- button OnClick calls it. Without this a later 'local' would shadow the
+-- definition with nil.
 local ShowEmoteMenu
-local ApplyFilter
 
 ----------------------------------------------------------------------
 -- Right-click menu
@@ -1393,13 +1483,28 @@ EmoteMenu.ApplyButtonSize = ApplyButtonSize
 -- so filtering costs one pass over the list and no frame churn.
 function ApplyFilter(text)
     local needle = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local wantVoiced = EmoteMenu.FilterVoiced
+    local wantAnimated = EmoteMenu.FilterAnimated
+
+    -- In edit mode every emote has to be visible so membership can be toggled,
+    -- which is why the search box and the filters are hidden there. They stop
+    -- applying as well: a filter that is still narrowing the list while its
+    -- control is off screen is worse than no filter at all.
+    if EditMode then
+        needle, wantVoiced, wantAnimated = "", false, false
+    end
+    local narrowed = needle ~= "" or wantVoiced or wantAnimated
     wipe(visible)
 
-    -- In edit mode every emote stays visible so membership can be toggled;
-    -- otherwise the tab restricts the list and the search narrows it further.
+    -- The tab restricts the list, and the search and the filters narrow it
+    -- further. Two filters on is an and, not an or: each one is a question
+    -- about the emote and both have to be answered yes.
     for _, button in ipairs(buttons) do
-        local inTab = EditMode or EmoteMenu:TabContains(ActiveTab, button.entry.emote)
-        if inTab and (needle == "" or Matches(button.entry, needle)) then
+        local entry = button.entry
+        local inTab = EditMode or EmoteMenu:TabContains(ActiveTab, entry.emote)
+        local marked = (not wantVoiced or entry.voiced)
+            and (not wantAnimated or entry.animated)
+        if inTab and marked and (needle == "" or Matches(entry, needle)) then
             visible[#visible + 1] = button
             button:Show()
         else
@@ -1408,19 +1513,29 @@ function ApplyFilter(text)
         button:UpdateMembership()
     end
 
-    if needle == "" then
+    if not narrowed then
         CountLabel:SetText(ActiveTab == "all" and ""
             or ("%d of %d"):format(#visible, #buttons))
-        ClearSearch:Hide()
     else
         CountLabel:SetText(("%d of %d"):format(#visible, #buttons))
-        ClearSearch:Show()
     end
+    ClearSearch:SetShown(needle ~= "")
     SearchBox.hint:SetShown(needle == "" and not SearchBox:HasFocus())
     NoMatches:SetShown(#visible == 0)
     if #visible == 0 then
-        NoMatches:SetText(needle ~= "" and "No emotes match that search."
-            or "This tab is empty. Press Edit to add some.")
+        -- Say which of the three is responsible, because "nothing here" with
+        -- no reason given reads as broken.
+        local why
+        if needle ~= "" and (wantVoiced or wantAnimated) then
+            why = "Nothing matches that search and filter."
+        elseif needle ~= "" then
+            why = "No emotes match that search."
+        elseif wantVoiced or wantAnimated then
+            why = "No emotes in this tab match that filter."
+        else
+            why = "This tab is empty. Press Edit to add some."
+        end
+        NoMatches:SetText(why)
     end
 
     -- A filter changes every position even when the column count has not, and
