@@ -949,6 +949,29 @@ check("sizing starts from a top-left anchor",
       L.eval("__core.EmoteMenu.MainPanelA") is not None)
 F.Resize(F, DEFAULT_W, DEFAULT_H)
 
+print("== 3d. a second copy of the addon does not error ==")
+# WoW leaves the old folder behind when an addon is renamed, so two copies
+# loading at once is a real situation. The second one must decline politely
+# rather than hand nil to LibDBIcon and throw on login.
+Ldup = new_runtime("nil")
+# Claim the data object name before the addon gets to it, as a first copy would.
+Ldup.execute("""
+    LibStub("LibDataBroker-1.1"):NewDataObject("Emote_Menu", { type = "data source" })
+""")
+ok = True
+try:
+    Ldup.execute(f"""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+""")
+except Exception as e:
+    ok = False
+    err = str(e)[:140]
+check("a duplicate copy loads without erroring", ok, err if not ok else "")
+check("and it does not register a second minimap icon",
+      Ldup.eval("__dbicon.registered['Emote_Menu']") is None)
+
 print("\n== 4. upgrade from an old SavedVariables file ==")
 L2 = new_runtime("""{
     ShowMinimapIcon = "On",

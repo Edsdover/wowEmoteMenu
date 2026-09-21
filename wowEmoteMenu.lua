@@ -1516,6 +1516,18 @@ function EmoteMenu:CreateMiniMapIcon()
         end,
     })
 
+    -- NewDataObject returns nil when something already claimed the name, which
+    -- happens when two copies of this addon are installed at once -- easy to do
+    -- while the folder is being renamed, since WoW leaves the old one behind.
+    -- Passing that nil to Register throws, so say something useful instead.
+    if not dataObject then
+        print("|cff66ccffEmote Menu|r: another copy of this addon is already "
+            .. "loaded, so this one is not adding a minimap icon. Check "
+            .. "Interface/AddOns for an older folder such as wowEmoteMenu-main "
+            .. "and delete it.")
+        return
+    end
+
     local minimap = MigrateMinimapSettings()
     icon:Register("Emote_Menu", dataObject, minimap)
 
