@@ -1,7 +1,8 @@
-## Interface: 11509, 16001
+## Interface: 120100, 50504, 38002, 20506, 11509, 16001
 ## Author: Edwin Dover
 ## Version: 1.0.0
 ## Title: Emote Menu
+## X-Curse-Project-ID: 1018942
 ## Notes: Menu for all emotes
 ## IconTexture: Interface\Icons\ability_seal
 ## Category: Social

@@ -1330,10 +1330,40 @@ local function BuildEmoteButtons()
     if buttonsBuilt then return end
     buttonsBuilt = true
 
-    -- TODO: sorting / filtering goes here once there are options for it
-    local sortedList = core.emoteTable
+    -- Only build buttons for emotes this client actually has. The addon ships
+    -- one data file for every flavour, and an older one simply does not know
+    -- the newer emotes -- a button that can never do anything is worse than a
+    -- missing one.
+    --
+    -- Listing an emote is not the same as implementing it: the Forever beta
+    -- declares huzzah, wince and the rest of the newest block while doing
+    -- nothing with them. Those were measured during the capture, so they are
+    -- hidden on that flavour and left alone everywhere else, where they work.
+    local unimplemented = {}
+    local known = core.unimplemented
+    if known and known.emotes then
+        local _, _, _, interface = GetBuildInfo()
+        -- Same flavour, any patch of it: 16001 and 16002 are both Forever,
+        -- while 11509 and 120100 are not.
+        if interface and math.floor(interface / 1000) == math.floor(known.interface / 1000) then
+            unimplemented = known.emotes
+        end
+    end
 
-    for i, entry in ipairs(sortedList) do
+    local declared = {}
+    for i = 1, (_G.MAXEMOTEINDEX or 1000) do
+        local token = _G["EMOTE" .. i .. "_TOKEN"]
+        if token then declared[token:lower()] = true end
+    end
+    -- If the globals are missing entirely, show everything rather than nothing.
+    local haveTokenList = next(declared) ~= nil
+
+    local i = 0
+    for _, entry in ipairs(core.emoteTable) do
+        local available = (not haveTokenList or declared[entry.emote]
+            or entry.serverOnly) and not unimplemented[entry.emote]
+        if available then
+        i = i + 1
         local emoteString = entry.emote
 
         -- Parented to the scroll child, not the panel, so they scroll with it.
@@ -1401,6 +1431,7 @@ local function BuildEmoteButtons()
         eBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         eBtn:SetScript("OnEnter", ShowTooltip)
         eBtn:SetScript("OnLeave", GameTooltip_Hide)
+        end
     end
 end
 

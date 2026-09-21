@@ -12,6 +12,14 @@ _STORE = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
                            "wowEmoteMenuStore.lua"), encoding="utf-8").read()
 EMOTE_COUNT = len(_re.findall(r'^        emote = ', _STORE, _re.M))
 
+# The stub reports the Forever interface, so the addon hides the emotes that
+# build measured as declared-but-not-implemented. "In the data" and "visible on
+# this client" are therefore different numbers, and tests must not confuse them.
+_UNIMPL_BLOCK = _re.search("core" + chr(92) + ".unimplemented = .*", _STORE, _re.S)
+_UNIMPL_TEXT = _UNIMPL_BLOCK.group(0) if _UNIMPL_BLOCK else ""
+UNIMPLEMENTED = set(_re.findall(chr(92) + chr(91) + chr(34) + "(\w+)" + chr(34) + chr(92) + chr(93) + " = true", _UNIMPL_TEXT))
+VISIBLE_COUNT = EMOTE_COUNT - len(UNIMPLEMENTED)
+
 failures = []
 def check(label, cond, detail=""):
     if cond:
@@ -119,7 +127,7 @@ end)()""") is True)
 L.execute("SlashCmdList['EMOTE_MENU']('')")
 check("panel is shown after slash command", L.eval("EmoteMenuFrame:IsShown()") is True)
 after = L.eval("#__frames")
-check("buttons built on first show", after - before >= EMOTE_COUNT, f"created={after - before}")
+check("buttons built on first show", after - before >= VISIBLE_COUNT, f"created={after - before}")
 
 # Reopening must not duplicate buttons
 L.execute("SlashCmdList['EMOTE_MENU']('')")
@@ -144,12 +152,12 @@ for _, f in ipairs(__frames) do
     end
 end
 """)
-check("clicked every emote button", L.eval("__buttonCount") == EMOTE_COUNT, f"n={L.eval('__buttonCount')}")
+check("clicked every emote button", L.eval("__buttonCount") == VISIBLE_COUNT, f"n={L.eval('__buttonCount')}")
 check("no errors clicking buttons", L.eval("#__clickErrors") == 0,
       list(L.eval("__clickErrors").values())[:3])
 check("no errors showing tooltips", L.eval("#__tipErrors") == 0,
       list(L.eval("__tipErrors").values())[:3])
-check("DoEmote fired once per button", L.eval("#__emotes") == EMOTE_COUNT)
+check("DoEmote fired once per button", L.eval("#__emotes") == VISIBLE_COUNT)
 check("all DoEmote tokens are lowercase",
       L.eval("""(function()
           for _, e in ipairs(__emotes) do
@@ -166,9 +174,100 @@ end)()""")
 # targetText cannot silently break this assertion.
 import re as _re
 _store = open(os.path.join(ADDON, "wowEmoteMenuStore.lua"), encoding="utf-8").read()
-_expected = len(_re.findall(r'targetText = ""', _store))
+_entries = _re.findall(
+    r'emote = "([^"]*)",\s*cmd = "[^"]*",\s*noTargetText = "[^"]*",\s*targetText = "([^"]*)"',
+    _store)
+_expected = sum(1 for name, tgt in _entries if tgt == "" and name not in UNIMPLEMENTED)
 check(f"{_expected} emotes forced to no-target", notarget == _expected,
       f"n={notarget} expected={_expected}")
+
+print("""\n== 2a. only emotes this client has ==""")
+check("with no token list, every available emote is shown",
+      emote_buttons() == VISIBLE_COUNT, f"{emote_buttons()} of {VISIBLE_COUNT}")
+
+# An older flavour declares fewer emotes; the newer ones must not appear.
+Lold = LuaRuntime(unpack_returned_tuples=True)
+Lold.execute(open(STUB, encoding="utf-8").read())
+Lold.execute("EmoteMenuDB = nil")
+Lold.execute("__core = {}")
+Lold.execute("""
+    MAXEMOTEINDEX = 500
+    EMOTE1_TOKEN = "AGREE"
+    EMOTE2_TOKEN = "WAVE"
+    EMOTE3_TOKEN = "DANCE"
+""")
+_loader = Lold.eval("function(p,n,c) return assert(loadfile(p))(n,c) end")
+for _rel in ["Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
+             "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua", "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua",
+             "wowEmoteMenuStore.lua", "wowEmoteMenu.lua"]:
+    if _rel == "wowEmoteMenu.lua":
+        Lold.execute('local f={Register=function()end,Show=function()end,Hide=function()end} LibStub.libs["LibDBIcon-1.0"]=f')
+    _loader(os.path.join(ADDON, _rel).replace(chr(92), "/"), ADDON_FOLDER, Lold.globals()["__core"])
+Lold.execute("""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "wowEmoteMenu-main") end
+end
+""")
+Lold.execute("SlashCmdList['EMOTE_MENU']()")
+built = Lold.eval("""(function()
+    local t = {}
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil then t[#t+1] = f.text end
+    end
+    table.sort(t)
+    return table.concat(t, " ")
+end)()""").split()
+server_only = ["fail", "goodluck", "moan", "serious", "shake", "stink", "stopattack", "toast"]
+built_all = built
+check("a limited client only gets the emotes it declares",
+      set(built) == {"agree", "wave", "dance"} | set(server_only), f"{sorted(built)}")
+check("emotes it lacks are absent", "boop" not in built and "huzzah" not in built,
+      [e for e in ("boop", "huzzah") if e in built])
+check("server-only emotes survive the filter", all(e in built for e in server_only),
+      [e for e in server_only if e not in built])
+
+# An emote a client lists but never performs is hidden only on the flavour
+# measured to not implement it, and stays available everywhere else.
+check("measured-unimplemented emotes are hidden on that flavour",
+      all(e not in built_all for e in UNIMPLEMENTED),
+      [e for e in UNIMPLEMENTED if e in built_all])
+check("they are still in the data for other flavours",
+      all(("emote = " + chr(34) + e + chr(34)) in _STORE for e in UNIMPLEMENTED))
+
+# A different flavour must NOT have them hidden.
+Lret = LuaRuntime(unpack_returned_tuples=True)
+Lret.execute(open(STUB, encoding="utf-8").read())
+Lret.execute("EmoteMenuDB = nil")
+Lret.execute("__core = {}")
+# Retail interface, and it declares huzzah.
+Lret.execute("""
+    function GetBuildInfo() return "12.1.0", "60000", "Sep 2026", 120100 end
+    MAXEMOTEINDEX = 700
+    EMOTE1_TOKEN = "AGREE"
+    EMOTE624_TOKEN = "HUZZAH"
+""")
+_l2 = Lret.eval("function(p,n,c) return assert(loadfile(p))(n,c) end")
+for _rel in ["Libs/LibStub/LibStub.lua", "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
+             "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua", "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua",
+             "wowEmoteMenuStore.lua", "wowEmoteMenu.lua"]:
+    if _rel == "wowEmoteMenu.lua":
+        Lret.execute('local f={Register=function()end,Show=function()end,Hide=function()end} LibStub.libs["LibDBIcon-1.0"]=f')
+    _l2(os.path.join(ADDON, _rel).replace(chr(92), "/"), ADDON_FOLDER, Lret.globals()["__core"])
+Lret.execute("""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "wowEmoteMenu-main") end
+end
+""")
+Lret.execute("SlashCmdList['EMOTE_MENU']()")
+built_retail = Lret.eval("""(function()
+    local t = {}
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil then t[#t+1] = f.text end
+    end
+    return table.concat(t, " ")
+end)()""").split()
+check("the same emote IS shown on a flavour that implements it",
+      "huzzah" in built_retail, sorted(built_retail))
 
 print("\n== 2b. resize reflows the grid ==")
 core = L.globals()["__core"]
@@ -256,7 +355,7 @@ placed = L.eval("""(function()
     end
     return n
 end)()""")
-check(f"all {EMOTE_COUNT} buttons still positioned", placed == EMOTE_COUNT, f"placed={placed}")
+check(f"all {VISIBLE_COUNT} buttons still positioned", placed == VISIBLE_COUNT, f"placed={placed}")
 
 check("buttons live in the scroll child, not the panel", L.eval("""(function()
     for _, f in ipairs(__frames) do
@@ -311,7 +410,7 @@ check("matched button is the right one", L.eval("""(function()
 end)()""") is True)
 
 SB.Type(SB, "")
-check("clearing restores every button", shown_buttons() == EMOTE_COUNT, f"shown={shown_buttons()}")
+check("clearing restores every button", shown_buttons() == VISIBLE_COUNT, f"shown={shown_buttons()}")
 
 # Matching the printed text is what makes the search worth having.
 SB.Type(SB, "sorry")
@@ -352,7 +451,7 @@ end)()""") is True)
 SB.Type(SB, "dance")
 SB.Escape(SB)
 check("escape clears the filter first", SB.GetText(SB) == "", repr(SB.GetText(SB)))
-check("all buttons back after escape", shown_buttons() == EMOTE_COUNT)
+check("all buttons back after escape", shown_buttons() == VISIBLE_COUNT)
 
 # Filtering while narrow must still lay out correctly.
 F.Resize(F, BW * 4 + INSET, 400)
@@ -467,7 +566,7 @@ ALL, FAV = tab("All"), tab("Favourites")
 check("All and Favourites tabs exist", ALL is not None and FAV is not None)
 check("Edit button is hidden on All, not just disabled",
       edit_toggle().shown is False, f"shown={edit_toggle().shown}")
-check("All tab shows every emote", shown_buttons() == EMOTE_COUNT, f"{shown_buttons()}")
+check("All tab shows every emote", shown_buttons() == VISIBLE_COUNT, f"{shown_buttons()}")
 
 FAV.Click(FAV)
 check("Favourites starts empty", shown_buttons() == 0, f"{shown_buttons()}")
@@ -482,7 +581,7 @@ check("Edit button appears on a real tab", edit_toggle().shown is True,
 # Entering edit mode reveals every emote so membership can be toggled.
 ET = edit_toggle()
 ET.Click(ET)
-check("edit mode shows all emotes to pick from", shown_buttons() == EMOTE_COUNT,
+check("edit mode shows all emotes to pick from", shown_buttons() == VISIBLE_COUNT,
       f"{shown_buttons()}")
 check("edit toggle now reads Done", edit_toggle().text == "Done", edit_toggle().text)
 

@@ -23,9 +23,9 @@
 [CmdletBinding()]
 param(
     [string]$AddonsPath,
-    # Must match the .toc filename, which is why it carries the -main suffix:
-    # a GitHub "Download ZIP" of the main branch unpacks to <repo>-main.
-    [string]$FolderName = 'wowEmoteMenu-main'
+    # Must match the .toc filename. The packager produces this folder name;
+    # a GitHub "Download ZIP" unpacks to <repo>-main and needs renaming by hand.
+    [string]$FolderName = 'EmoteMenu'
 )
 
 $ErrorActionPreference = 'Stop'

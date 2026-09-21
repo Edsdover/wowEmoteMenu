@@ -11,6 +11,14 @@
 ![Emote Menu](https://i.imgur.com/tJvM9fy.png)
 
 
+### A note on other game versions
+
+The emote text was captured from a live WoW: Forever client by performing every
+emote and recording what the server replied. Other versions may word a few
+differently; where they do the tooltip is slightly off but the emote itself
+still works. Emotes your client does not have are hidden rather than shown as
+buttons that do nothing.
+
 ### Known issues
 
 **WoW: Forever beta (1.60.1, build 69913):** the client writes addon
