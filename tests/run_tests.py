@@ -1525,6 +1525,69 @@ check("the filters are not written to the DB",
       L16.eval("EmoteMenuDB.FilterVoiced") is None
       and L16.eval("EmoteMenuDB.FilterAnimated") is None)
 
+print("\n== 2k. key binding and the minimap icon ==")
+# Bindings.xml and the addon have to agree on three names, and a mismatch shows
+# up in game as a blank row in the Key Bindings panel rather than an error --
+# which is exactly the kind of thing nobody notices until a user reports it.
+BINDINGS = open(os.path.join(ADDON, "Bindings.xml"), encoding="utf-8").read()
+ADDON_SRC = open(os.path.join(ADDON, "wowEmoteMenu.lua"), encoding="utf-8").read()
+TOC = open(os.path.join(ADDON, "EmoteMenu.toc"), encoding="utf-8").read()
+
+check("Bindings.xml is listed in the toc", "Bindings.xml" in TOC)
+
+bind_name = _re.search(r'<Binding name="([^"]+)"', BINDINGS)
+bind_header = _re.search(r'header="([^"]+)"', BINDINGS)
+bind_body = _re.search(r'>\s*(\w+)\(\)\s*</Binding>', BINDINGS)
+check("the XML declares a binding, a header and a body",
+      bind_name and bind_header and bind_body,
+      BINDINGS[:120])
+check("the binding's name global is defined",
+      f"BINDING_NAME_{bind_name.group(1)} =" in ADDON_SRC,
+      f"BINDING_NAME_{bind_name.group(1)}")
+check("the header's name global is defined",
+      f"BINDING_HEADER_{bind_header.group(1)} =" in ADDON_SRC,
+      f"BINDING_HEADER_{bind_header.group(1)}")
+
+L17 = new_runtime("nil")
+L17.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+fn = bind_body.group(1)
+check(f"the function the XML calls exists: {fn}()",
+      L17.eval(f"type(_G['{fn}'])") == "function", L17.eval(f"type(_G['{fn}'])"))
+check("the binding names are strings, not nil",
+      isinstance(L17.eval(f"_G.BINDING_NAME_{bind_name.group(1)}"), str)
+      and isinstance(L17.eval(f"_G.BINDING_HEADER_{bind_header.group(1)}"), str))
+
+check("the panel starts closed", L17.eval("EmoteMenuFrame:IsShown()") is False)
+L17.execute(f"_G['{fn}']()")
+check("the binding opens the menu", L17.eval("EmoteMenuFrame:IsShown()") is True)
+L17.execute(f"_G['{fn}']()")
+check("and closes it again", L17.eval("EmoteMenuFrame:IsShown()") is False)
+
+# The minimap icon: left-click toggles as it always has, right-click goes
+# straight to the options.
+broker = L17.eval("__dbicon.registered['Emote_Menu'].obj")
+check("the minimap icon registered a click handler", broker.OnClick is not None)
+broker.OnClick(None, "LeftButton")
+check("left-click still opens the menu", L17.eval("EmoteMenuFrame:IsShown()") is True)
+broker.OnClick(None, "LeftButton")
+check("and closes it", L17.eval("EmoteMenuFrame:IsShown()") is False)
+
+check("the options start hidden", L17.eval("EmoteMenuOptionsFrame:IsShown()") is False)
+broker.OnClick(None, "RightButton")
+check("right-click opens the options", L17.eval("EmoteMenuOptionsFrame:IsShown()") is True)
+check("without dragging the whole menu open with it",
+      L17.eval("EmoteMenuFrame:IsShown()") is False)
+
+L17.execute("__tooltipLines = nil")
+broker.OnTooltipShow(L17.eval("GameTooltip"))
+tip = list(L17.eval("__tooltipLines").values())
+check("the tooltip says what each click does",
+      any("right-click" in line.lower() for line in tip), tip)
+
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""
 local f = EmoteMenuFrame

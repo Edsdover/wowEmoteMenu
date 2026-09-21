@@ -2114,6 +2114,13 @@ end
 
 Options:SetScript("OnShow", function() EmoteMenu:RefreshOptions() end)
 
+-- Reachable without the menu being open, because the minimap icon offers it on
+-- a right-click and the panel it normally lives on may well be closed.
+function EmoteMenu:ShowOptions()
+    Options:Show()
+    Options:Raise()
+end
+
 -- The cog itself. Left of the close button, and small: the title row is also
 -- the drag handle, so anything up there has to stay out of the way.
 local OptionsButton = CreateFrame("Button", nil, PageF)
@@ -2328,12 +2335,18 @@ function EmoteMenu:CreateMiniMapIcon()
         type = "data source",
         text = "Emote Menu",
         icon = "Interface\\Icons\\ability_seal",
-        OnClick = function()
-            EmoteMenu:Toggle()
+        OnClick = function(_, button)
+            if button == "RightButton" then
+                EmoteMenu:ShowOptions()
+            else
+                EmoteMenu:Toggle()
+            end
         end,
         OnTooltipShow = function(tooltip)
             if not tooltip or not tooltip.AddLine then return end
             tooltip:AddLine("Emote Menu")
+            tooltip:AddLine("Left-click to open, right-click for options.",
+                0.8, 0.8, 0.8)
         end,
     })
 
@@ -2373,6 +2386,24 @@ end
 _G.SLASH_EMOTE_MENU1 = "/emotemenu"
 _G.SLASH_EMOTE_MENU2 = "/emm"
 SlashCmdList["EMOTE_MENU"] = function()
+    EmoteMenu:Toggle()
+end
+
+----------------------------------------------------------------------
+-- Key binding
+----------------------------------------------------------------------
+-- Bindings.xml runs its body in the global environment, so the one global
+-- this addon deliberately creates is here. It is prefixed for the same reason
+-- every other name is: a bare Toggle() in _G would be asking for a collision.
+--
+-- These two strings are what the game's Key Bindings panel shows, looked up
+-- from the header and binding names in the XML. They have to match it exactly,
+-- which the test suite checks, because a typo shows up as a blank row rather
+-- than an error.
+_G.BINDING_HEADER_EMOTEMENU = "Emote Menu"
+_G.BINDING_NAME_EMOTEMENU_TOGGLE = "Show or hide the menu"
+
+function _G.EmoteMenu_Toggle()
     EmoteMenu:Toggle()
 end
 

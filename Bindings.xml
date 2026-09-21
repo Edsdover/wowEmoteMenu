@@ -1,0 +1,9 @@
+<Bindings>
+    <!-- The body runs in the global environment, so it calls a global the
+         addon defines rather than anything local to it. The names shown in
+         the game's Key Bindings panel come from the BINDING_HEADER_EMOTEMENU
+         and BINDING_NAME_* globals, set alongside the function. -->
+    <Binding name="EMOTEMENU_TOGGLE" header="EMOTEMENU">
+        EmoteMenu_Toggle()
+    </Binding>
+</Bindings>
