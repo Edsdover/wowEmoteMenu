@@ -1,0 +1,45 @@
+name: Release
+
+# Releases are cut from a tag, so nothing publishes by accident on a push to
+# main. Tag with the version in the .toc:
+#
+#   git tag -a v1.0.0 -m "1.0.0" && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:        # lets a release be re-run by hand if an upload fails
+
+permissions:
+  contents: write           # needed to create the GitHub release
+
+jobs:
+  test:
+    # The addon loads into a real Lua interpreter against a stubbed WoW API.
+    # Running it here means a broken release cannot be published from a machine
+    # where someone forgot to run the suite.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install lupa
+        run: python -m pip install --quiet lupa
+      - name: Run the test suite
+        run: python tests/run_tests.py
+
+  release:
+    needs: test             # no green suite, no release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # the packager reads tags and history for the changelog
+
+      - name: Package and upload
+        uses: BigWigsMods/packager@v2
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}

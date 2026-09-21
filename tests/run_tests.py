@@ -269,6 +269,24 @@ end)()""").split()
 check("the same emote IS shown on a flavour that implements it",
       "huzzah" in built_retail, sorted(built_retail))
 
+# A truncated label must not leave you guessing which emote it is, and a few
+# commands are not simply the emote name.
+def tip_of(name):
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.entry ~= nil and f.text == "%s" then return f.tiptext end
+        end
+    end)()""" % name)
+
+# attackmytarget's actual command is /attacktarget -- precisely the sort of
+# thing a truncated label hides.
+check("long name shows its command", "/attacktarget" in (tip_of("attackmytarget") or ""),
+      repr(tip_of("attackmytarget")))
+check("command that differs from the name is shown",
+      "/followme" in (tip_of("follow") or ""), repr(tip_of("follow")))
+check("ordinary short names do not repeat themselves",
+      "/wave" not in (tip_of("wave") or ""), repr(tip_of("wave")))
+
 print("\n== 2b. resize reflows the grid ==")
 core = L.globals()["__core"]
 EM = core.EmoteMenu

@@ -3,6 +3,7 @@
 ## Version: 1.0.0
 ## Title: Emote Menu
 ## X-Curse-Project-ID: 1018942
+## X-Wago-ID: QNl4gxNe
 ## Notes: Menu for all emotes
 ## IconTexture: Interface\Icons\ability_seal
 ## Category: Social

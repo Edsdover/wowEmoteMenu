@@ -1,0 +1,28 @@
+# Packaging for the BigWigs packager, which CurseForge and Wago both use.
+#
+# The folder inside the zip is what WoW installs and what names the saved
+# settings file, so package-as is effectively user-visible state. It was
+# wowEmoteMenu-main only because GitHub names ZIP downloads after the branch.
+
+package-as: EmoteMenu
+
+enable-nolib-creation: no
+
+ignore:
+  # Test harness and capture tooling. Useful in the repo, no business in the
+  # addon folder a player installs.
+  - tests
+  - tools
+  - docs
+  - sync.ps1
+  - .gitattributes
+  - .gitignore
+  - CHANGELOG.md
+
+# Libraries are committed rather than pulled in at package time, deliberately.
+# LibDBIcon in particular is pinned to a revision this addon has been tested
+# against; fetching the latest at release would mean shipping a version nobody
+# ran. Update them on purpose, not by accident.
+
+manual-changelog: CHANGELOG.md
+changelog-title: Emote Menu

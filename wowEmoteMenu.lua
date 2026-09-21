@@ -809,6 +809,18 @@ local function BuildTooltip(entry)
     return entry.cmd ~= "" and entry.cmd or entry.emote
 end
 
+-- A long label is truncated on the button, and the tooltip otherwise shows the
+-- emote's text rather than its name -- so "attackmyt..." leaves you guessing.
+-- Naming the command fixes that, and also covers the handful whose command is
+-- not simply the emote name, such as follow being /followme.
+local function CommandNote(entry)
+    if entry.cmd == "" then return "" end
+    local truncated = #entry.emote > 11
+    local differs = entry.cmd ~= ("/" .. entry.emote)
+    if not truncated and not differs then return "" end
+    return "|n|cff888888" .. entry.cmd .. "|r"
+end
+
 -- The markers are small and unlabelled, so the tooltip spells them out.
 local function MarkerNote(entry)
     if entry.animated and entry.voiced then
@@ -1389,6 +1401,7 @@ local function BuildEmoteButtons()
         -- target rather than letting the server silently drop it.
         local ignoresTarget = entry.targetText == ""
         eBtn.tiptext = BuildTooltip(entry) .. MarkerNote(entry)
+            .. CommandNote(entry)
         eBtn:SetScript("OnClick", function(self, mouseButton)
             if mouseButton == "RightButton" then
                 ShowEmoteMenu(self, entry)

@@ -8,7 +8,7 @@
 ### Have fun seeing and using all the emotes so rarely utilized!
 
 
-![Emote Menu](https://i.imgur.com/tJvM9fy.png)
+![Emote Menu](docs/emote-menu.png)
 
 
 ### A note on other game versions
