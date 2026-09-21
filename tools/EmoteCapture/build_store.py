@@ -165,7 +165,10 @@ def write_store(entries, build_info):
                 "        voiced = " + r["voiced"] + ",",
                 "    },"]
     out += ["}", ""]
-    open(STORE, "w", encoding="utf-8", newline="\r\n").write("\r\n".join(out))
+    # newline="" writes bytes exactly as joined. Passing newline="\r\n" as well
+    # makes Python translate every \n a second time, which silently produced
+    # \r\r\n throughout the generated file.
+    open(STORE, "w", encoding="utf-8", newline="").write("\r\n".join(out))
     return rows
 
 

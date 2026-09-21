@@ -133,6 +133,12 @@ local function newRegion(parent, kind)
 end
 function frameMeta:CreateTexture() return newRegion(self, "Texture") end
 function frameMeta:CreateFontString() return newRegion(self, "FontString") end
+-- Buttons made from a template own a label; the addon re-anchors it so the
+-- text cannot run under the markers, so it has to be a real region here.
+function frameMeta:GetFontString()
+    if not self.fontString then self.fontString = newRegion(self, "FontString") end
+    return self.fontString
+end
 
 function frameMeta:Show()
     self.shown = true

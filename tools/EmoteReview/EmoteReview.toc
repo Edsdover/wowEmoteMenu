@@ -1,0 +1,8 @@
+## Interface: 16001, 11509
+## Title: Emote Review
+## Notes: Temporary tool. Records which emotes play an animation and/or a sound.
+## Version: 1.0
+## SavedVariables: EmoteReviewDB
+
+Emotes.lua
+EmoteReview.lua

@@ -172,9 +172,12 @@ DEFAULT_W = EM.DEFAULT_WIDTH
 DEFAULT_H = EM.DEFAULT_HEIGHT
 
 # Pure layout arithmetic, independent of any frame.
-for viewport, count, want_cols in ((850, EMOTE_COUNT, 10), (255, EMOTE_COUNT, 3),
-                                   (85, EMOTE_COUNT, 1), (40, EMOTE_COUNT, 1),
-                                   (1700, EMOTE_COUNT, 20)):
+BW = EM.BUTTON_WIDTH
+INSET = EM.VIEWPORT_INSET
+# Widths expressed in buttons, so changing BUTTON_WIDTH cannot invalidate these.
+for viewport, count, want_cols in ((BW * 10, EMOTE_COUNT, 10), (BW * 3, EMOTE_COUNT, 3),
+                                   (BW, EMOTE_COUNT, 1), (BW // 2, EMOTE_COUNT, 1),
+                                   (BW * 20, EMOTE_COUNT, 20)):
     cols, rows = EM.ComputeGrid(viewport, count)
     import math as _m
     ok = cols == want_cols and rows == _m.ceil(count / want_cols)
@@ -196,12 +199,15 @@ def grid_state():
 check("default size lays out 10 columns", grid_state() == 10, f"got {grid_state()}")
 
 # Narrow the panel: fewer columns, more rows, scrollbar appears.
-F.Resize(F, 400, 540)
-check("narrowing reflows to fewer columns", grid_state() == 4, f"got {grid_state()}")
+narrow_cols = 4
+F.Resize(F, BW * narrow_cols + INSET, DEFAULT_H)
+check(f"narrowing reflows to {narrow_cols} columns", grid_state() == narrow_cols,
+      f"got {grid_state()}")
 
-# Widen it again.
-F.Resize(F, 1200, 540)
-check("widening reflows to more columns", grid_state() == 13, f"got {grid_state()}")
+wide_cols = 13
+F.Resize(F, BW * wide_cols + INSET, DEFAULT_H)
+check(f"widening reflows to {wide_cols} columns", grid_state() == wide_cols,
+      f"got {grid_state()}")
 
 # Back to default.
 F.Resize(F, DEFAULT_W, DEFAULT_H)
@@ -343,7 +349,7 @@ check("escape clears the filter first", SB.GetText(SB) == "", repr(SB.GetText(SB
 check("all buttons back after escape", shown_buttons() == EMOTE_COUNT)
 
 # Filtering while narrow must still lay out correctly.
-F.Resize(F, 400, 400)
+F.Resize(F, BW * 4 + INSET, 400)
 SB.Type(SB, "wave")
 placed_ok = L.eval("""(function()
     for _, f in ipairs(__frames) do
@@ -356,6 +362,63 @@ end)()""")
 check("filtered buttons are positioned when narrow", placed_ok is True)
 SB.Type(SB, "")
 F.Resize(F, DEFAULT_W, DEFAULT_H)
+
+print("\n== 2d. animation / sound markers ==")
+
+# A marker is an OVERLAY texture parented to a button. Count them per button.
+L.execute("""
+__markers = {}
+for _, f in ipairs(__frames) do
+    if f.frameType == "Texture" and f.parent and f.parent.template == "UIPanelButtonTemplate" then
+        local name = f.parent.text
+        __markers[name] = (__markers[name] or 0) + 1
+    end
+end
+""")
+
+def marks(token):
+    return L.eval("""(__markers["%s"] or 0)""" % token)
+
+store = {}
+import re as _re2
+for m in _re2.finditer(r'emote = "([^"]*)",\s*cmd = "[^"]*",\s*noTargetText = "[^"]*",\s*targetText = "[^"]*",\s*animated = (\w+),\s*voiced = (\w+)', _STORE):
+    store[m.group(1)] = (m.group(2) == "true", m.group(3) == "true")
+
+both = [t for t,(a,v) in store.items() if a and v]
+anim = [t for t,(a,v) in store.items() if a and not v]
+snd  = [t for t,(a,v) in store.items() if v and not a]
+none = [t for t,(a,v) in store.items() if not a and not v]
+print(f"  (store says: both={len(both)} anim={len(anim)} sound={len(snd)} neither={len(none)})")
+
+# Three bars per marker, so: 6 for both, 3 for one, 0 for neither.
+if both: check("emote with both gets 6 marker bars", marks(both[0]) == 6, f"{both[0]}={marks(both[0])}")
+if anim: check("animation only gets 3 bars", marks(anim[0]) == 3, f"{anim[0]}={marks(anim[0])}")
+if snd:  check("sound only gets 3 bars", marks(snd[0]) == 3, f"{snd[0]}={marks(snd[0])}")
+if none: check("neither gets no markers", marks(none[0]) == 0, f"{none[0]}={marks(none[0])}")
+
+mismatch = [t for t,(a,v) in store.items() if marks(t) != (3 if a else 0) + (3 if v else 0)]
+check("every button matches its flags", not mismatch, f"{len(mismatch)} wrong: {mismatch[:5]}")
+
+# Markers must never overlap the label.
+check("label is inset away from the markers", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" then
+            local fs = f.fontString
+            if fs and fs.points and fs.points.RIGHT then
+                return fs.points.RIGHT.x < 0
+            end
+        end
+    end
+end)()""") is True)
+
+# The tooltip has to say what the markers mean.
+if both:
+    tip = L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.template == "UIPanelButtonTemplate" and f.text == "%s" then return f.tiptext end
+        end
+    end)()""" % both[0])
+    check("tooltip explains the markers", "animation and a sound" in (tip or ""), repr(tip)[-60:])
 
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""

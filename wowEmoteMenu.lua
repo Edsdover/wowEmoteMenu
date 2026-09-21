@@ -104,8 +104,13 @@ end
 ----------------------------------------------------------------------
 local DEFAULT_COLUMNS = 10
 
-local BUTTON_WIDTH = 85
+-- Wide enough to carry the animation/sound markers at the right edge without
+-- squeezing the longest labels ('congratulate').
+local BUTTON_WIDTH = 100
 local BUTTON_HEIGHT = 18
+local MARKER_SIZE = 8
+local MARKER_GAP = 2
+local MARKER_AREA = (MARKER_SIZE * 2) + MARKER_GAP + 4
 
 local MARGIN_LEFT = 10          -- gap between the panel edge and the grid
 local MARGIN_BOTTOM = 10
@@ -136,11 +141,17 @@ local DEFAULT_HEIGHT = CONTENT_TOP + (DEFAULT_ROWS * BUTTON_HEIGHT) + MARGIN_BOT
 -- ...but never taller than the screen it has to open on.
 local screenCap = math.floor((UIParent:GetHeight() or 900) * 0.85)
 DEFAULT_HEIGHT = math.max(MIN_HEIGHT, math.min(DEFAULT_HEIGHT, screenCap, MAX_HEIGHT))
+local widthCap = math.floor((UIParent:GetWidth() or 1200) * 0.9)
+DEFAULT_WIDTH = math.max(MIN_WIDTH, math.min(DEFAULT_WIDTH, widthCap, MAX_WIDTH))
 
 EmoteMenu.PanelW = DEFAULT_WIDTH
 EmoteMenu.PanelH = DEFAULT_HEIGHT
 -- Exposed so the tests can assert against the real defaults.
 EmoteMenu.DEFAULT_WIDTH, EmoteMenu.DEFAULT_HEIGHT = DEFAULT_WIDTH, DEFAULT_HEIGHT
+EmoteMenu.BUTTON_WIDTH = BUTTON_WIDTH
+-- Panel width minus this is the usable grid width, which is what decides the
+-- column count.
+EmoteMenu.VIEWPORT_INSET = (MARGIN_LEFT * 2) + SCROLLBAR_WIDTH + SCROLLBAR_GAP
 
 -- The .toc targets Classic Era (11509) and Forever (16001), which are different
 -- API generations: SetMinResize/SetMaxResize were removed in 10.0 and replaced
@@ -348,6 +359,62 @@ local function BuildTooltip(entry)
     return entry.cmd ~= "" and entry.cmd or entry.emote
 end
 
+-- The markers are small and unlabelled, so the tooltip spells them out.
+local function MarkerNote(entry)
+    if entry.animated and entry.voiced then
+        return "|n|cff888888Has an animation and a sound|r"
+    elseif entry.animated then
+        return "|n|cff888888Has an animation|r"
+    elseif entry.voiced then
+        return "|n|cff888888Has a sound|r"
+    end
+    return ""
+end
+
+----------------------------------------------------------------------
+-- Animation / sound markers
+----------------------------------------------------------------------
+-- Drawn from plain coloured rectangles rather than texture files. Texture
+-- paths differ between Classic Era and modern clients and a missing one renders
+-- as a green block with no error to catch, whereas SetColorTexture needs no
+-- file at all and looks identical on both.
+--
+--   sound     three ascending bars, like a volume meter
+--   animation three motion lines
+--
+-- Both sit in the right-hand margin that BUTTON_WIDTH reserves, so they never
+-- overlap the label.
+
+local MARKER_SOUND = { 0.98, 0.82, 0.25 }   -- warm gold
+local MARKER_ANIM  = { 0.35, 0.78, 0.98 }   -- cool blue
+
+local function AddBar(button, colour, x, y, w, h)
+    local t = button:CreateTexture(nil, "OVERLAY")
+    t:SetColorTexture(colour[1], colour[2], colour[3], 0.95)
+    t:SetSize(w, h)
+    t:SetPoint("BOTTOMRIGHT", x, y)
+    return t
+end
+
+local function AddMarkers(button, entry)
+    local right = -4
+    if entry.voiced then
+        -- Ascending bars, bottom aligned, reading left to right.
+        local base = right - MARKER_SIZE
+        AddBar(button, MARKER_SOUND, base + 6, 5, 2, 3)
+        AddBar(button, MARKER_SOUND, base + 3, 5, 2, 5)
+        AddBar(button, MARKER_SOUND, base + 0, 5, 2, 8)
+        right = right - MARKER_SIZE - MARKER_GAP
+    end
+    if entry.animated then
+        -- Stacked motion lines, the middle one shorter.
+        local base = right - MARKER_SIZE
+        AddBar(button, MARKER_ANIM, base, 11, MARKER_SIZE, 2)
+        AddBar(button, MARKER_ANIM, base - 2, 8, MARKER_SIZE - 2, 2)
+        AddBar(button, MARKER_ANIM, base, 5, MARKER_SIZE, 2)
+    end
+end
+
 ----------------------------------------------------------------------
 -- Layout
 ----------------------------------------------------------------------
@@ -498,12 +565,22 @@ local function BuildEmoteButtons()
         eBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
         eBtn:SetText(emoteString)
         eBtn.entry = entry
+
+        -- Keep the label centred, but inside the area left of the markers.
+        local label = eBtn:GetFontString()
+        if label then
+            label:ClearAllPoints()
+            label:SetPoint("LEFT", 4, 0)
+            label:SetPoint("RIGHT", -MARKER_AREA, 0)
+            label:SetJustifyH("CENTER")
+        end
+        AddMarkers(eBtn, entry)
         buttons[i] = eBtn
 
         -- An empty targetText means the emote ignores the target, so force no
         -- target rather than letting the server silently drop it.
         local ignoresTarget = entry.targetText == ""
-        eBtn.tiptext = BuildTooltip(entry)
+        eBtn.tiptext = BuildTooltip(entry) .. MarkerNote(entry)
         if ignoresTarget then
             eBtn:SetScript("OnClick", function()
                 DoEmote(emoteString, "none")

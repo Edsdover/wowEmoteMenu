@@ -48,6 +48,45 @@ Things learned the hard way, all handled in the code:
   tool cannot read back its own earlier output. `Captured.lua` exists to carry
   results across a reload, because addon files do load normally.
 
+## EmoteReview
+
+Records which emotes play an animation and/or a sound. Nothing in the client
+reports this -- the server's chat text says nothing about animations, and there
+is no API for "did a sound just play" -- so it has to be watched and listened
+to. This makes that bearable: one click per emote.
+
+    /emotereview            -- resumes at the first unanswered emote
+    /emotereview recheck    -- only the emotes listed as suspect in Emotes.lua
+    /emotereview all        -- start over
+
+Then log out or `/reload`, and:
+
+    python tools/EmoteReview/build_flags.py \
+        ".../WTF/Account/<acct>/SavedVariables/EmoteReview.lua"
+
+    # --carry instead bakes the answers into Emotes.lua so a partial
+    # session survives a reload
+
+Things that matter, all handled in the code:
+
+- **Perform the emote the way the menu button does.** 236 of the 256 are
+  targetable and the button performs those against the current target; an
+  earlier version forced no target throughout, which would have recorded the
+  wrong answer for any emote that differs between the two forms.
+- **Looping emotes hide the next animation.** dance, sit, sleep and laydown put
+  the character into a state that persists until cancelled, and an emote
+  reviewed while one holds can look like it has no animation. `recheck` fires a
+  cancel first, waits, then performs the real emote. (When this was actually
+  tested, none of the 18 suspects changed -- so the concern was real but the
+  original answers were right.)
+- **Blizzard's EmoteList and TextEmoteSpeechList are shown as a hint but never
+  pre-selected.** They cover only ~22 emotes each, and a wrong default that
+  someone clicks past is worse than no default. They are a good cross-check
+  afterwards: the completed review agreed with both lists exactly.
+- **Click-driven, not keyboard-driven.** Capturing keys in a frame would
+  swallow the movement keys for the whole session.
+
+
 ## SVRepro
 
 Two-file reproduction for the beta bug where SavedVariables are written
