@@ -59,6 +59,10 @@ adds or removes it rather than performing it, so a stray click cannot fire an
 emote at whoever you have targeted. Press **Done** when finished. You can also
 right-click any emote at any time for *Add to Favourites*.
 
+While editing, the tab's own name becomes a highlighted field. Click it, type,
+and press Enter -- the tab keeps everything in it, including the PvP and Raid
+tabs, which can be renamed to whatever you actually use them for.
+
 While editing, tick **Open this tab by default** to choose where the panel
 starts each time you log in. During a session it reopens on whichever tab you
 used last.
@@ -87,8 +91,7 @@ addon can do about it. Tracked at
 ### TODO
 
 1. Filters for animated / voiced emotes
-2. Rename a tab after creating it
-3. Check `/mountspecial` once a mount is available -- it needs one to do
+2. Check `/mountspecial` once a mount is available -- it needs one to do
    anything, so it is currently marked as having no animation
 
 

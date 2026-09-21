@@ -1210,6 +1210,170 @@ check("a zero text size is rejected", EM13.FontSize == EM13.DEFAULT_FONT_SIZE, E
 check("an unknown sort order is rejected", EM13.SortOrder == "across", EM13.SortOrder)
 check("a bad escape setting is rejected", EM13.EscapeCloses == "On", EM13.EscapeCloses)
 
+print("\n== 2i. renaming a tab ==")
+L14 = new_runtime("nil")
+L14.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+L14.execute("SlashCmdList['EMOTE_MENU']('')")
+EM14 = L14.eval("__core.EmoteMenu")
+BOX = EM14.RenameBox
+
+
+def tab14(label):
+    return L14.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.label and f.label.text == "%s" and f.id then return f end
+        end
+    end)()""" % label)
+
+
+def toggle14():
+    return L14.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.template == "UIPanelButtonTemplate"
+               and (f.text == "Edit" or f.text == "Done") then return f end
+        end
+    end)()""")
+
+
+def label_of(tab_id):
+    """What AllTabs reports the tab is called, which is what the strip draws."""
+    return L14.eval("""(function()
+        for _, t in ipairs(__core.EmoteMenu.AllTabs()) do
+            if t.id == "%s" then return t.label end
+        end
+    end)()""" % tab_id)
+
+
+def tab_field(tab_id, field):
+    return L14.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.id == "%s" and not f.isAdd then return f.%s end
+        end
+    end)()""" % (tab_id, field))
+
+
+def box_shown():
+    return L14.eval("__core.EmoteMenu.RenameBox:IsShown()")
+
+
+# The field only exists while a tab is being edited.
+check("no rename field on the All tab", box_shown() is False)
+PVP = tab14("PvP")
+PVP.Click(PVP)
+check("still none before edit mode is entered", box_shown() is False)
+
+ET = toggle14()
+ET.Click(ET)
+check("edit mode puts a rename field on the tab", box_shown() is True)
+check("it is filled with the current name", BOX.text == "PvP", BOX.text)
+check("the tab's own label is hidden underneath",
+      tab_field("pvp", "label").shown is False)
+check("the tab widens to hold the field", tab_field("pvp", "w") >= 110,
+      tab_field("pvp", "w"))
+
+members_before = L14.eval('__core.EmoteMenu:TabCount("pvp")')
+BOX.SetText(BOX, "Battlegrounds")
+BOX.EnterPressed(BOX)
+check("typing a name and pressing enter renames the tab",
+      label_of("pvp") == "Battlegrounds", label_of("pvp"))
+check("the tab button shows the new name",
+      tab_field("pvp", "label").text == "Battlegrounds",
+      tab_field("pvp", "label").text)
+members_after = L14.eval('__core.EmoteMenu:TabCount("pvp")')
+check("the id is untouched, so the contents came along",
+      members_after == members_before, f"{members_after} vs {members_before}")
+check("a renamed shipped tab is recorded in the DB",
+      L14.eval("EmoteMenuDB.tabLabels.pvp") == "Battlegrounds")
+
+# Escape abandons the edit.
+BOX.SetText(BOX, "Nonsense")
+BOX.Escape(BOX)
+check("escape puts the old name back",
+      label_of("pvp") == "Battlegrounds" and BOX.text == "Battlegrounds",
+      f"{label_of('pvp')} / {BOX.text}")
+
+# Pressing Done with a name typed but never confirmed still takes it.
+BOX.SetText(BOX, "Arena")
+ET = toggle14()
+ET.Click(ET)
+check("pressing Done commits a name that was never entered",
+      label_of("pvp") == "Arena", label_of("pvp"))
+check("leaving edit mode takes the field away", box_shown() is False)
+check("and gives the tab its label back", tab_field("pvp", "label").shown is True)
+
+# Switching tabs mid-rename commits to the tab that was being renamed.
+ET = toggle14()
+ET.Click(ET)
+BOX.SetText(BOX, "Duels")
+FAV14 = tab14("Favourites")
+FAV14.Click(FAV14)
+check("switching tabs commits the name to the tab it belonged to",
+      label_of("pvp") == "Duels", label_of("pvp"))
+
+# A blank name is refused rather than leaving a nameless tab.
+ET = toggle14()
+ET.Click(ET)
+BOX.SetText(BOX, "   ")
+BOX.EnterPressed(BOX)
+check("a blank name is refused", label_of("favourites") == "Favourites",
+      label_of("favourites"))
+check("and the field is redrawn with the real name", BOX.text == "Favourites",
+      BOX.text)
+ET = toggle14()
+ET.Click(ET)
+
+check("the API refuses to rename All",
+      L14.eval('(__core.EmoteMenu:RenameTab("all", "Everything"))') is None)
+check("and refuses a name that is too long",
+      L14.eval('(__core.EmoteMenu:RenameTab("favourites", "%s"))' % ("x" * 40)) is None)
+
+# A custom tab carries its name directly rather than through an override.
+L14.execute('__core.EmoteMenu:AddTab("Mine")')
+newid = L14.eval("""(function()
+    for _, t in ipairs(EmoteMenuDB.customTabs) do return t.id end
+end)()""")
+L14.execute('__core.EmoteMenu:RenameTab("%s", "Yours")' % newid)
+check("a custom tab is renamed in place", label_of(newid) == "Yours", label_of(newid))
+check("with no stray override left behind",
+      L14.eval("EmoteMenuDB.tabLabels['%s']" % newid) is None)
+
+# Deleting a renamed shipped tab forgets the name along with the rest of its
+# state, so restoring it later is genuinely the shipped tab.
+L14.execute('__core.EmoteMenu:RemoveTab("pvp")')
+check("deleting a shipped tab drops its name override",
+      L14.eval("EmoteMenuDB.tabLabels.pvp") is None)
+L14.execute("__core.EmoteMenu:RestoreDefaultTabs()")
+check("restoring it brings back the shipped name", label_of("pvp") == "PvP",
+      label_of("pvp"))
+
+# A stored name that is not a usable string must not reach the tab strip.
+L15 = new_runtime('''{
+    tabLabels = { pvp = 42, raid = "" },
+    customTabs = { { id = "custom1", label = { "not a string" } } },
+    settingsWritten = 1,
+}''')
+L15.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+names15 = L15.eval("""(function()
+    local out = {}
+    for _, t in ipairs(__core.EmoteMenu.AllTabs()) do out[#out + 1] = t.label end
+    return table.concat(out, ",")
+end)()""")
+check("a non-string stored name falls back to the shipped one", "PvP" in names15, names15)
+check("an empty stored name falls back too", "Raid" in names15, names15)
+check("a custom tab with a broken name is dropped",
+      names15 == "All,Favourites,PvP,Raid", names15)
+L15.execute("SlashCmdList['EMOTE_MENU']('')")
+check("the panel still opens with corrupt tab names",
+      L15.eval("EmoteMenuFrame:IsShown()") is True)
+
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""
 local f = EmoteMenuFrame

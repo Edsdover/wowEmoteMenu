@@ -169,16 +169,47 @@ local function HiddenTabs()
     return EmoteMenuDB.hiddenTabs
 end
 
+-- Renaming a shipped tab cannot change the addon's own table, so the new name
+-- is recorded against the id and applied on the way out. A tab the player made
+-- carries its name directly and needs none of this.
+local function TabLabels()
+    if type(EmoteMenuDB) ~= "table" then return {} end
+    if type(EmoteMenuDB.tabLabels) ~= "table" then EmoteMenuDB.tabLabels = {} end
+    return EmoteMenuDB.tabLabels
+end
+
+local MAX_TAB_LABEL = 18
+
+-- Anything read back out of the DB is treated as suspect: a stored name reaches
+-- the screen, so a wrong type or an absurd length has to fall back rather than
+-- be drawn.
+local function ValidLabel(label)
+    return type(label) == "string" and label ~= "" and #label <= MAX_TAB_LABEL
+end
+
 local function AllTabs()
     local list = {}
     local hidden = HiddenTabs()
+    local renamed = TabLabels()
     for _, tab in ipairs(TABS) do
         -- "All" is the one tab that always exists; without it an empty tab list
         -- would leave no way back to the full set.
-        if tab.fixed or not hidden[tab.id] then list[#list + 1] = tab end
+        if tab.fixed or not hidden[tab.id] then
+            local custom = not tab.fixed and renamed[tab.id] or nil
+            if ValidLabel(custom) and custom ~= tab.label then
+                -- A copy, so the addon's own table keeps the shipped name and
+                -- restoring a deleted tab is not left holding an old edit.
+                list[#list + 1] = { id = tab.id, label = custom,
+                                    fixed = tab.fixed, defaults = tab.defaults }
+            else
+                list[#list + 1] = tab
+            end
+        end
     end
     for _, tab in ipairs(CustomTabs()) do
-        if type(tab) == "table" and tab.id and tab.label then list[#list + 1] = tab end
+        if type(tab) == "table" and tab.id and ValidLabel(tab.label) then
+            list[#list + 1] = tab
+        end
     end
     return list
 end
@@ -208,15 +239,54 @@ local function NewTabId()
     return "custom" .. n
 end
 
-function EmoteMenu:AddTab(label)
+-- Trim and check a name a player typed. Shared so creating and renaming cannot
+-- drift apart on what they accept.
+local function CleanLabel(label)
     label = tostring(label or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if label == "" then return nil, "A tab needs a name." end
-    if #label > 18 then return nil, "That name is too long." end
+    if #label > MAX_TAB_LABEL then return nil, "That name is too long." end
+    return label
+end
+EmoteMenu.MAX_TAB_LABEL = MAX_TAB_LABEL
+
+function EmoteMenu:AddTab(label)
+    local err
+    label, err = CleanLabel(label)
+    if not label then return nil, err end
     local custom = CustomTabs()
     if #custom >= 8 then return nil, "That is as many tabs as will fit." end
     local tab = { id = NewTabId(), label = label }
     custom[#custom + 1] = tab
     return tab
+end
+
+-- Ids never change, so membership, the default-tab setting and anything else
+-- stored against a tab survives being renamed without being touched.
+function EmoteMenu:RenameTab(id, label)
+    local tab = TabById(id)
+    if not tab or tab.fixed then return nil, "That tab cannot be renamed." end
+
+    local err
+    label, err = CleanLabel(label)
+    if not label then return nil, err end
+
+    for _, entry in ipairs(CustomTabs()) do
+        if entry.id == id then
+            entry.label = label
+            return label
+        end
+    end
+
+    local labels = TabLabels()
+    -- Back to the shipped name rather than storing a copy of it, so the
+    -- override only exists while it is actually overriding something.
+    for _, shipped in ipairs(TABS) do
+        if shipped.id == id then
+            labels[id] = (label ~= shipped.label) and label or nil
+            return label
+        end
+    end
+    return nil, "That tab cannot be renamed."
 end
 
 function EmoteMenu:RemoveTab(id)
@@ -238,6 +308,7 @@ function EmoteMenu:RemoveTab(id)
         if shipped.id == id then
             HiddenTabs()[id] = true
             if type(EmoteMenuDB.tabs) == "table" then EmoteMenuDB.tabs[id] = nil end
+            TabLabels()[id] = nil
             return true
         end
     end
@@ -723,6 +794,65 @@ EditBanner:SetPoint("RIGHT", SearchBox, "RIGHT", -4, 0)
 EditBanner:SetJustifyH("LEFT")
 EditBanner:Hide()
 
+-- Renaming happens where the name already is: in edit mode the active tab's
+-- label becomes this field, sitting exactly over it. A dialog would have worked
+-- too, but a tab name is one short string and asking for a whole modal to
+-- change it reads as heavier than the job.
+--
+-- Not focused automatically. An EditBox with focus swallows the movement keys,
+-- which is a nasty surprise for a panel opened mid-play, so the field is made
+-- obvious instead and waits to be clicked.
+local RENAME_MIN_WIDTH = 110
+
+local RenameBox = CreateFrame("EditBox", nil, TabStrip)
+RenameBox:SetFrameLevel((TabStrip:GetFrameLevel() or 0) + 5)
+RenameBox:SetAutoFocus(false)
+RenameBox:SetMaxLetters(MAX_TAB_LABEL)
+RenameBox:SetFontObject("GameFontHighlightSmall")
+RenameBox:SetJustifyH("CENTER")
+RenameBox:SetTextInsets(4, 4, 0, 0)
+RenameBox:Hide()
+
+-- A gold wash rather than the flat grey the other fields use: this one has to
+-- announce itself, because nothing else about a tab suggests its name can be
+-- typed over.
+RenameBox.bg = RenameBox:CreateTexture(nil, "BACKGROUND")
+RenameBox.bg:SetAllPoints()
+RenameBox.bg:SetColorTexture(0.98, 0.82, 0.25, 0.20)
+
+-- A one-pixel frame around it, built from four strips. Cheap, and it survives
+-- every client generation, which a border texture would not.
+RenameBox.edges = {}
+for i = 1, 4 do
+    local edge = RenameBox:CreateTexture(nil, "BORDER")
+    edge:SetColorTexture(0.98, 0.82, 0.25, 0.75)
+    RenameBox.edges[i] = edge
+end
+RenameBox.edges[1]:SetPoint("TOPLEFT")
+RenameBox.edges[1]:SetPoint("TOPRIGHT")
+RenameBox.edges[1]:SetHeight(1)
+RenameBox.edges[2]:SetPoint("BOTTOMLEFT")
+RenameBox.edges[2]:SetPoint("BOTTOMRIGHT")
+RenameBox.edges[2]:SetHeight(1)
+RenameBox.edges[3]:SetPoint("TOPLEFT")
+RenameBox.edges[3]:SetPoint("BOTTOMLEFT")
+RenameBox.edges[3]:SetWidth(1)
+RenameBox.edges[4]:SetPoint("TOPRIGHT")
+RenameBox.edges[4]:SetPoint("BOTTOMRIGHT")
+RenameBox.edges[4]:SetWidth(1)
+
+-- Selecting the lot on focus means the common case -- replacing the name
+-- outright -- is one click and then typing.
+RenameBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+RenameBox:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText("Rename this tab")
+    GameTooltip:AddLine("Type a new name and press Enter. Escape puts the old "
+        .. "one back.", 0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+end)
+RenameBox:SetScript("OnLeave", GameTooltip_Hide)
+
 local TabPool = {}
 
 local function MakeTabButton(tab, index)
@@ -795,7 +925,41 @@ local function LayoutTabs()
     SearchBox:SetWidth(math.max(80, math.min(SEARCH_MAX_WIDTH, room)))
 end
 
+local function ActiveTabButton()
+    for _, b in ipairs(TabButtons) do
+        if b.id == ActiveTab and not b.isAdd then return b end
+    end
+end
+
 local function RefreshTabs()
+    -- The tab being edited widens to hold the field, so the name has somewhere
+    -- to grow into rather than the field being narrower than the word in it.
+    local renaming = EditMode and ActiveTab ~= "all"
+    for _, b in ipairs(TabButtons) do
+        local editing = renaming and b.id == ActiveTab and not b.isAdd
+        b.label:SetShown(not editing)
+        local natural = math.max(40, b.label:GetStringWidth() + 18)
+        b:SetWidth(editing and math.max(RENAME_MIN_WIDTH, natural) or natural)
+    end
+
+    RenameBox:SetShown(renaming)
+    if renaming then
+        local button = ActiveTabButton()
+        if button then
+            RenameBox:ClearAllPoints()
+            RenameBox:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
+            RenameBox:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+            -- Never while it is being typed in: a rename in progress outranks
+            -- whatever redraw brought us here.
+            if not RenameBox:HasFocus() then
+                local tab = TabById(ActiveTab)
+                RenameBox:SetText(tab and tab.label or "")
+            end
+        else
+            RenameBox:Hide()
+        end
+    end
+
     for _, b in ipairs(TabButtons) do
         local active = (b.id == ActiveTab)
         if b.isAdd then
@@ -1327,9 +1491,12 @@ EmoteMenu.ShowPrompt = ShowPrompt
 -- Tab buttons are created here rather than with the strip because selecting
 -- one has to re-run the filter, which is defined above.
 local RebuildTabStrip
+local CommitRename
 
 local function SelectTab(id)
     if ActiveTab == id then return end
+    -- Whatever was typed into the old tab's name belongs to the old tab.
+    CommitRename()
     ActiveTab = id
     sessionTab = id
     EditMode = false
@@ -1355,6 +1522,7 @@ local function PromptNewTab()
 end
 
 local function PromptDeleteTab()
+    CommitRename()
     local tab = TabById(ActiveTab)
     if not tab or tab.fixed then return end
     -- Say at the point of deletion how to undo it, rather than leaving someone
@@ -1434,6 +1602,44 @@ function RebuildTabStrip()
     TabButtons[#TabButtons + 1] = add
 end
 
+-- Guarded against itself: committing gives up focus, and losing focus commits.
+local renameInProgress = false
+
+function CommitRename()
+    if renameInProgress or not RenameBox:IsShown() then return end
+    renameInProgress = true
+
+    local id = ActiveTab
+    local tab = TabById(id)
+    local typed = RenameBox:GetText()
+    if tab and typed ~= tab.label then
+        if EmoteMenu:RenameTab(id, typed) then
+            EmoteMenu:WarnIfNotPersisting()
+            RebuildTabStrip()
+        end
+    end
+    RenameBox:ClearFocus()
+    -- Redrawn from what the tab is actually called now, so a name that was
+    -- rejected -- empty, or nothing but spaces -- cannot sit in the field
+    -- looking accepted.
+    local after = TabById(id)
+    RenameBox:SetText(after and after.label or "")
+
+    renameInProgress = false
+    RefreshTabs()
+    LayoutTabs()
+end
+EmoteMenu.CommitRename = CommitRename
+EmoteMenu.RenameBox = RenameBox
+
+RenameBox:SetScript("OnEnterPressed", CommitRename)
+RenameBox:SetScript("OnEditFocusLost", CommitRename)
+RenameBox:SetScript("OnEscapePressed", function(self)
+    local tab = TabById(ActiveTab)
+    self:SetText(tab and tab.label or "")
+    self:ClearFocus()
+end)
+
 DeleteTab:SetScript("OnClick", PromptDeleteTab)
 DefaultCheck:SetScript("OnClick", function()
     if ActiveTab == "all" then return end
@@ -1445,9 +1651,15 @@ RebuildTabStrip()
 
 EditToggle:SetScript("OnClick", function()
     if ActiveTab == "all" then return end
+    -- A name typed but not confirmed still counts: pressing Done is a
+    -- reasonable way to finish renaming.
+    if EditMode then CommitRename() end
     EditMode = not EditMode
     if EditMode then EmoteMenu:WarnIfNotPersisting() end
     RefreshTabs()
+    -- The tab being edited changes width, so the strip has to be laid out
+    -- again -- and on a narrow panel that can add or remove a row.
+    LayoutTabs()
     ApplyFilter(SearchBox:GetText())
 end)
 
@@ -1937,6 +2149,7 @@ end)
 
 -- Restore size and position, then build and lay out the contents
 PageF:SetScript("OnHide", function()
+    CommitRename()
     EditMode = false
     CloseContextMenu()
     Options:Hide()

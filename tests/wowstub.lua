@@ -245,6 +245,9 @@ function frameMeta:SetHighlightFontObject(o) self.highlightFont = o end
 function frameMeta:SetDisabledFontObject(o) self.disabledFont = o end
 
 -- EditBox
+function frameMeta:SetFrameLevel(v) self.frameLevel = v end
+function frameMeta:GetFrameLevel() return self.frameLevel or 1 end
+
 function frameMeta:SetNumeric(v) self.numeric = v end
 function frameMeta:EnterPressed()
     if self.scripts.OnEnterPressed then self.scripts.OnEnterPressed(self) end
@@ -290,7 +293,7 @@ end
 
 stubMethods(frameMeta, {
     "SetAllPoints", "SetColorTexture", "SetFrameStrata",
-    "SetFrameLevel", "SetClampedToScreen", "EnableMouse", "SetMovable",
+    "SetClampedToScreen", "EnableMouse", "SetMovable",
     "RegisterForDrag", "RegisterForClicks", "StartMoving", "StopMovingOrSizing",
     "StartSizing", "SetUserPlaced",
     "SetJustifyH", "SetJustifyV", "SetNonSpaceWrap", "SetAlpha", "SetScale",
