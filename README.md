@@ -24,10 +24,18 @@ addon can do about it. Tracked at
 
 **All** lists every emote. **Favourites** starts empty and is yours to fill.
 
+**PvP** and **Raid** come with a starting set of emotes. Press **+** to make
+your own tab, and any tab but All can be deleted -- the default ones can be
+brought back by right-clicking **+**.
+
 Press **Edit** on a tab to curate it: every emote appears, and clicking one
 adds or removes it rather than performing it, so a stray click cannot fire an
 emote at whoever you have targeted. Press **Done** when finished. You can also
 right-click any emote at any time for *Add to Favourites*.
+
+While editing, tick **Open this tab by default** to choose where the panel
+starts each time you log in. During a session it reopens on whichever tab you
+used last.
 
 Search works inside the selected tab.
 

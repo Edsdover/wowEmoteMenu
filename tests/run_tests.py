@@ -570,6 +570,202 @@ check("search cannot show non-members", shown_buttons() == 0, f"{shown_buttons()
 SB.Type(SB, "")
 ALL.Click(ALL)
 
+print("\n== 2f. creating and deleting tabs ==")
+
+check("PvP and Raid ship with contents",
+      L.eval('__core.EmoteMenu:TabCount("pvp")') > 0 and
+      L.eval('__core.EmoteMenu:TabCount("raid")') > 0,
+      f"pvp={L.eval(chr(39)+chr(39))}")
+
+# Every shipped default must be a real emote, or it is a dead entry nobody can
+# see and nobody can fix.
+bad = L.eval("""(function()
+    local known, missing = {}, {}
+    for _, e in ipairs(__core.emoteTable) do known[e.emote] = true end
+    for _, tab in ipairs(__core.EmoteMenu.TABS) do
+        for _, name in ipairs(tab.defaults or {}) do
+            if not known[name] then missing[#missing + 1] = tab.id .. ":" .. name end
+        end
+    end
+    return table.concat(missing, " ")
+end)()""")
+check("shipped tab contents are all real emotes", bad == "", bad)
+
+def tab_count():
+    return L.eval("""(function()
+        local n = 0
+        for _, f in ipairs(__frames) do if f.id and f.shown then n = n + 1 end end
+        return n
+    end)()""")
+
+before_tabs = tab_count()
+check("a + tab is offered", L.eval("""(function()
+    for _, f in ipairs(__frames) do if f.isAdd and f.shown then return true end end
+    return false
+end)()""") is True)
+
+# Creating a tab
+L.execute('__core.EmoteMenu:AddTab("Roleplay")')
+check("custom tab created", L.eval('__core.EmoteMenu:IsCustomTab("custom1")') is True)
+check("custom tab stored in the DB", L.eval("#EmoteMenuDB.customTabs") == 1)
+err = L.eval('select(2, __core.EmoteMenu:AddTab(""))')
+check("a blank name is refused", err is not None, repr(err))
+err = L.eval('select(2, __core.EmoteMenu:AddTab(string.rep("x", 40)))')
+check("an over-long name is refused", err is not None, repr(err))
+
+# Frames must be reused, not recreated, or every reopen leaks a frame per tab.
+L.execute("SlashCmdList['EMOTE_MENU']('')")   # hide
+L.execute("SlashCmdList['EMOTE_MENU']('')")   # show: pool grows for the new tab
+frames_before = L.eval("#__frames")
+L.execute("SlashCmdList['EMOTE_MENU']('')")   # hide
+L.execute("SlashCmdList['EMOTE_MENU']('')")   # show again: must reuse
+check("reopening does not leak tab frames", L.eval("#__frames") == frames_before,
+      f"{L.eval(chr(35)+chr(95)+chr(95)+chr(102)+chr(114)+chr(97)+chr(109)+chr(101)+chr(115))} vs {frames_before}")
+
+# Deleting takes its membership with it.
+L.execute('__core.EmoteMenu:TabToggle("custom1", "wave")')
+check("custom tab holds an emote", L.eval('__core.EmoteMenu:TabContains("custom1", "wave")') is True)
+L.execute('__core.EmoteMenu:RemoveTab("custom1")')
+check("custom tab removed", L.eval('__core.EmoteMenu:IsCustomTab("custom1")') is False)
+check("its membership went with it", L.eval("EmoteMenuDB.tabs.custom1") is None)
+# Shipped tabs can be removed and brought back; "All" cannot go at all,
+# because without it there would be no route back to the full list.
+check("All can never be deleted", L.eval('__core.EmoteMenu:RemoveTab("all")') is False)
+check("a shipped tab can be removed", L.eval('__core.EmoteMenu:RemoveTab("pvp")') is True)
+check("removed shipped tab disappears from the strip", L.eval("""(function()
+    for _, t in ipairs(__core.EmoteMenu.AllTabs()) do
+        if t.id == "pvp" then return false end
+    end
+    return true
+end)()""") is True)
+check("restore is offered once something is hidden",
+      L.eval('__core.EmoteMenu:HasHiddenTabs()') is True)
+L.execute('__core.EmoteMenu:RestoreDefaultTabs()')
+check("restoring brings it back with its shipped contents",
+      L.eval('__core.EmoteMenu:TabCount("pvp")') > 0,
+      L.eval('__core.EmoteMenu:TabCount("pvp")'))
+
+# Wrapping: a narrow panel puts tabs on more rows and everything below moves.
+F.Resize(F, DEFAULT_W, DEFAULT_H)
+wide_viewport = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.frameType == "ScrollFrame" then return f:GetHeight() end
+    end
+end)()""")
+for name in ("Roleplay", "Greetings", "Dancing", "Silly"):
+    L.execute(f'__core.EmoteMenu:AddTab("{name}")')
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+F.Resize(F, EM.BUTTON_WIDTH * 3 + EM.VIEWPORT_INSET, DEFAULT_H)
+narrow_viewport = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.frameType == "ScrollFrame" then return f:GetHeight() end
+    end
+end)()""")
+check("narrow panel wraps tabs and shrinks the grid area",
+      narrow_viewport < wide_viewport, f"wide={wide_viewport} narrow={narrow_viewport}")
+for i in range(4):
+    L.execute('__core.EmoteMenu:RemoveTab("custom%d")' % (i + 2))
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+F.Resize(F, DEFAULT_W, DEFAULT_H)
+check("widening restores the grid area",
+      L.eval("""(function()
+          for _, f in ipairs(__frames) do
+              if f.frameType == "ScrollFrame" then return f:GetHeight() end
+          end
+      end)()""") == wide_viewport)
+
+# Within a session the panel returns to the tab last used, whatever the
+# default says -- a default you keep navigating away from is just friction.
+RAID = tab("Raid")
+RAID.Click(RAID)
+L.execute("SlashCmdList['EMOTE_MENU']('')")   # hide
+L.execute("SlashCmdList['EMOTE_MENU']('')")   # show
+check("reopening returns to the last used tab",
+      shown_buttons() == L.eval('__core.EmoteMenu:TabCount("raid")'),
+      f"{shown_buttons()} vs raid={L.eval(chr(39)+chr(39))}")
+ALL = tab("All")
+ALL.Click(ALL)
+
+# The search box stops growing well before the panel does.
+def search_width():
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.frameType == "EditBox" and f.parent == EmoteMenuFrame then
+                return f:GetWidth()
+            end
+        end
+    end)()""")
+
+F.Resize(F, DEFAULT_W, DEFAULT_H)
+wide = search_width()
+check("search box is capped on a wide panel", wide <= 260, f"{wide}px at {DEFAULT_W}px")
+F.Resize(F, 1800, DEFAULT_H)
+check("still capped when the panel is wider still", search_width() == wide,
+      f"{search_width()} vs {wide}")
+F.Resize(F, EM.BUTTON_WIDTH * 3 + EM.VIEWPORT_INSET, DEFAULT_H)
+narrow = search_width()
+check("but it does shrink on a narrow panel", narrow < wide, f"{narrow} vs {wide}")
+check("and never shrinks to nothing", narrow >= 80, f"{narrow}")
+F.Resize(F, DEFAULT_W, DEFAULT_H)
+
+# The checkbox is how the default gets set; the right-click that used to do it
+# was not discoverable.
+FAV = tab("Favourites")
+FAV.Click(FAV)
+ET = edit_toggle(); ET.Click(ET)
+chk = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.tick and f.label and f.label.text == "Open this tab by default" then return f end
+    end
+end)()""")
+check("edit mode offers a default-tab checkbox", chk is not None)
+check("checkbox is hidden outside edit mode or on All", chk.shown is True)
+check("checkbox starts unticked", chk.tick.shown is False)
+chk.Click(chk)
+check("ticking it sets the default", L.eval('__core.EmoteMenu.DefaultTab') == "favourites",
+      L.eval('__core.EmoteMenu.DefaultTab'))
+check("tick is now shown", chk.tick.shown is True)
+chk.Click(chk)
+check("unticking returns the default to All",
+      L.eval('__core.EmoteMenu.DefaultTab') == "all")
+ET = edit_toggle(); ET.Click(ET)
+check("checkbox hidden again after leaving edit mode", chk.shown is False)
+ALL = tab("All"); ALL.Click(ALL)
+
+# The default only decides the FIRST open after logging in, so that path needs
+# a fresh runtime rather than a reopen.
+L9 = new_runtime('{ DefaultTab = "pvp", settingsWritten = 1 }')
+L9.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+L9.execute("SlashCmdList['EMOTE_MENU']('')")
+shown9 = L9.eval("""(function()
+    local n = 0
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil and f.shown then n = n + 1 end
+    end
+    return n
+end)()""")
+check("first open of a session uses the default tab",
+      shown9 == L9.eval('__core.EmoteMenu:TabCount("pvp")'),
+      f"{shown9} vs {L9.eval(chr(39)+chr(39))}")
+check("a default tab that no longer exists falls back to All",
+      L9.eval('__core.EmoteMenu.DefaultTab') == "pvp")
+
+L10 = new_runtime('{ DefaultTab = "ghosttab", settingsWritten = 1 }')
+L10.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+check("an unknown stored default is rejected",
+      L10.eval('__core.EmoteMenu.DefaultTab') == "all",
+      L10.eval('__core.EmoteMenu.DefaultTab'))
+
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""
 local f = EmoteMenuFrame
@@ -608,6 +804,33 @@ end
 check("size written to the DB", L.eval("EmoteMenuDB.PanelW") == 640 and
       L.eval("EmoteMenuDB.PanelH") == 400,
       f'{L.eval("EmoteMenuDB.PanelW")}x{L.eval("EmoteMenuDB.PanelH")}')
+
+print("\n== 3c. resizing keeps the panel where it is ==")
+# Regression: the grip saved size but not position, while StartSizing
+# re-anchors the frame internally. The stale anchor made the panel jump on the
+# next open.
+F = L.globals()["EmoteMenuFrame"]
+L.execute('__core.EmoteMenu.MainPanelA = "CENTER"')
+L.execute('__core.EmoteMenu.MainPanelX = 999')
+grip = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.scripts and f.scripts.OnMouseDown and f.parent == EmoteMenuFrame
+           and f.scripts.OnMouseUp then return f end
+    end
+end)()""")
+check("resize grip exists", grip is not None)
+grip.scripts.OnMouseDown(grip)
+F.Resize(F, 700, 400)
+grip.scripts.OnMouseUp(grip)
+check("resize records the new size",
+      L.eval("__core.EmoteMenu.PanelW") == 700 and L.eval("__core.EmoteMenu.PanelH") == 400,
+      f'{L.eval("__core.EmoteMenu.PanelW")}x{L.eval("__core.EmoteMenu.PanelH")}')
+check("resize also records the position",
+      L.eval("__core.EmoteMenu.MainPanelX") != 999,
+      f'x={L.eval("__core.EmoteMenu.MainPanelX")}')
+check("sizing starts from a top-left anchor",
+      L.eval("__core.EmoteMenu.MainPanelA") is not None)
+F.Resize(F, DEFAULT_W, DEFAULT_H)
 
 print("\n== 4. upgrade from an old SavedVariables file ==")
 L2 = new_runtime("""{

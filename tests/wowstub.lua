@@ -70,20 +70,23 @@ function frameMeta:SetHeight(h) self.h = h end
 -- TOPLEFT + BOTTOMRIGHT pair has to produce a usable width and height.
 function frameMeta:GetWidth()
     if self.w then return self.w end
-    local tl, br = self.points.TOPLEFT, self.points.BOTTOMRIGHT
-    if tl and br then
+    -- Either right-hand anchor pins the width, exactly as the real client does.
+    local tl = self.points.TOPLEFT or self.points.BOTTOMLEFT
+    local right = self.points.BOTTOMRIGHT or self.points.TOPRIGHT
+    if tl and right then
         local parent = tl.rel or self.parent
-        if parent then return parent:GetWidth() + (br.x or 0) - (tl.x or 0) end
+        if parent then return parent:GetWidth() + (right.x or 0) - (tl.x or 0) end
     end
     return 0
 end
 
 function frameMeta:GetHeight()
     if self.h then return self.h end
-    local tl, br = self.points.TOPLEFT, self.points.BOTTOMRIGHT
-    if tl and br then
-        local parent = tl.rel or self.parent
-        if parent then return parent:GetHeight() + (tl.y or 0) - (br.y or 0) end
+    local top = self.points.TOPLEFT or self.points.TOPRIGHT
+    local bottom = self.points.BOTTOMRIGHT or self.points.BOTTOMLEFT
+    if top and bottom then
+        local parent = top.rel or self.parent
+        if parent then return parent:GetHeight() + (top.y or 0) - (bottom.y or 0) end
     end
     return 0
 end

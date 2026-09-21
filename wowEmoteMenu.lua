@@ -24,6 +24,7 @@ EmoteMenu.MainPanelA = "CENTER"
 EmoteMenu.MainPanelR = "CENTER"
 EmoteMenu.MainPanelX = 0
 EmoteMenu.MainPanelY = 0
+EmoteMenu.DefaultTab = "all"
 
 ----------------------------------------------------------------------
 -- Saved variables
@@ -130,16 +131,122 @@ end
 -- "all" is generated, never stored and never editable. Everything else keeps a
 -- set of emote names. Defaults ship in the addon so a tab is useful even when
 -- settings cannot be saved; the player's own changes layer on top in the DB.
+-- The shipped contents of PvP and Raid are a guess at what is useful, which
+-- would be a problem if they were permanent. They are not: every tab is
+-- editable and the player can make their own, so these only need to be a
+-- reasonable starting point rather than correct.
 local TABS = {
     { id = "all",        label = "All",        fixed = true },
     { id = "favourites", label = "Favourites", defaults = {} },
+    { id = "pvp",        label = "PvP", defaults = {
+        "attackmytarget", "charge", "stopattack", "incoming", "helpme",
+        "healme", "oom", "flee", "threaten", "taunt", "victory", "surrender",
+        "rude", "spit", "mock", "cheer", "laugh", "point", "bye", "ready",
+    } },
+    { id = "raid",       label = "Raid", defaults = {
+        "oom", "healme", "helpme", "incoming", "ready", "wait", "follow",
+        "thank", "congratulate", "cheer", "applaud", "apologize", "brb",
+        "golfclap", "agree", "nod", "clap", "bow",
+    } },
 }
 EmoteMenu.TABS = TABS
 
-local function TabById(id)
+-- Tabs the player made. Kept as a list so their order is stable, and merged
+-- after the shipped ones by AllTabs().
+local function CustomTabs()
+    if type(EmoteMenuDB) ~= "table" then return {} end
+    if type(EmoteMenuDB.customTabs) ~= "table" then EmoteMenuDB.customTabs = {} end
+    return EmoteMenuDB.customTabs
+end
+
+-- Shipped tabs cannot be removed from the addon, so deleting one records it as
+-- hidden instead. They can be brought back, which a custom tab cannot be.
+local function HiddenTabs()
+    if type(EmoteMenuDB) ~= "table" then return {} end
+    if type(EmoteMenuDB.hiddenTabs) ~= "table" then EmoteMenuDB.hiddenTabs = {} end
+    return EmoteMenuDB.hiddenTabs
+end
+
+local function AllTabs()
+    local list = {}
+    local hidden = HiddenTabs()
     for _, tab in ipairs(TABS) do
+        -- "All" is the one tab that always exists; without it an empty tab list
+        -- would leave no way back to the full set.
+        if tab.fixed or not hidden[tab.id] then list[#list + 1] = tab end
+    end
+    for _, tab in ipairs(CustomTabs()) do
+        if type(tab) == "table" and tab.id and tab.label then list[#list + 1] = tab end
+    end
+    return list
+end
+
+function EmoteMenu:HasHiddenTabs()
+    for _ in pairs(HiddenTabs()) do return true end
+    return false
+end
+
+function EmoteMenu:RestoreDefaultTabs()
+    local hidden = HiddenTabs()
+    for id in pairs(hidden) do hidden[id] = nil end
+end
+EmoteMenu.AllTabs = AllTabs
+
+local function TabById(id)
+    for _, tab in ipairs(AllTabs()) do
         if tab.id == id then return tab end
     end
+end
+
+-- Ids are generated rather than derived from the label, so two tabs can share a
+-- name and renaming later cannot orphan the membership stored against the id.
+local function NewTabId()
+    local n = 1
+    while TabById("custom" .. n) do n = n + 1 end
+    return "custom" .. n
+end
+
+function EmoteMenu:AddTab(label)
+    label = tostring(label or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if label == "" then return nil, "A tab needs a name." end
+    if #label > 18 then return nil, "That name is too long." end
+    local custom = CustomTabs()
+    if #custom >= 8 then return nil, "That is as many tabs as will fit." end
+    local tab = { id = NewTabId(), label = label }
+    custom[#custom + 1] = tab
+    return tab
+end
+
+function EmoteMenu:RemoveTab(id)
+    local tab = TabById(id)
+    if tab and tab.fixed then return false end   -- "All" always stays
+
+    local custom = CustomTabs()
+    for i, entry in ipairs(custom) do
+        if entry.id == id then
+            table.remove(custom, i)
+            if type(EmoteMenuDB.tabs) == "table" then EmoteMenuDB.tabs[id] = nil end
+            return true
+        end
+    end
+
+    -- A shipped tab: hide it and drop whatever was stored against it, so
+    -- restoring later brings back the shipped contents rather than an old edit.
+    for _, shipped in ipairs(TABS) do
+        if shipped.id == id then
+            HiddenTabs()[id] = true
+            if type(EmoteMenuDB.tabs) == "table" then EmoteMenuDB.tabs[id] = nil end
+            return true
+        end
+    end
+    return false
+end
+
+function EmoteMenu:IsCustomTab(id)
+    for _, tab in ipairs(CustomTabs()) do
+        if tab.id == id then return true end
+    end
+    return false
 end
 
 -- Membership lives under EmoteMenuDB.tabs[id]. Reading goes through here so a
@@ -213,6 +320,10 @@ local TAB_GAP = 4
 local CONTENT_TOP = 92
 local SEARCH_HEIGHT = 20
 local COUNT_WIDTH = 92          -- 'showing 12 of 256' beside the search box
+-- A single-line field stretched across a wide panel looks like a mistake, so
+-- it stops growing well before the panel does. It still shrinks on a narrow
+-- one, where the space genuinely is scarce.
+local SEARCH_MAX_WIDTH = 260
 local SCROLLBAR_WIDTH = 12
 local SCROLLBAR_GAP = 4
 
@@ -278,15 +389,33 @@ PageF:SetResizable(true)
 SetResizeLimits(PageF, MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT)
 PageF:RegisterForDrag("LeftButton")
 PageF:SetScript("OnDragStart", PageF.StartMoving)
-PageF:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
-    self:SetUserPlaced(false)
-    -- Save panel position
+-- Record wherever the frame actually ended up. Both moving and resizing have
+-- to call this: StartSizing re-anchors the frame internally so the corner being
+-- dragged stays put, which means the stored anchor is stale the moment a resize
+-- finishes. Saving size alone left the panel jumping to a new spot on reopen.
+local function SavePlacement(self)
     local point, _, relativePoint, xOfs, yOfs = self:GetPoint()
+    if not point then return end
     EmoteMenu.MainPanelA = point
     EmoteMenu.MainPanelR = relativePoint
     EmoteMenu.MainPanelX = xOfs
     EmoteMenu.MainPanelY = yOfs
+end
+
+-- Re-anchor to the top-left corner without moving the frame. Sizing from
+-- BOTTOMRIGHT keeps the top-left fixed, so starting from any other anchor makes
+-- the frame lurch as WoW converts between them.
+local function AnchorTopLeft(self)
+    local left, top = self:GetLeft(), self:GetTop()
+    if not left or not top then return end
+    self:ClearAllPoints()
+    self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+end
+
+PageF:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    self:SetUserPlaced(false)
+    SavePlacement(self)
 end)
 
 -- Add background color
@@ -352,100 +481,6 @@ CountLabel:SetWidth(COUNT_WIDTH - 10)
 CountLabel:SetJustifyH("RIGHT")
 
 ----------------------------------------------------------------------
--- Tab strip
-----------------------------------------------------------------------
--- Built by hand rather than from a Blizzard tab template: those differ between
--- API generations, and the strip has to grow as the player adds tabs anyway.
-
-local ActiveTab = "all"
-local EditMode = false
-local TabButtons = {}
-
-local TabStrip = CreateFrame("Frame", nil, PageF)
-TabStrip:SetPoint("TOPLEFT", MARGIN_LEFT, -34)
-TabStrip:SetPoint("TOPRIGHT", -(MARGIN_LEFT + 80), -34)
-TabStrip:SetHeight(TAB_HEIGHT)
-
--- The lock. Editing is off by default and has to be asked for, so a fast
--- click can never quietly rearrange a tab.
-local EditToggle = CreateFrame("Button", nil, PageF, "UIPanelButtonTemplate")
-EditToggle:SetSize(70, TAB_HEIGHT)
-EditToggle:SetPoint("TOPRIGHT", -MARGIN_LEFT, -34)
-EditToggle:SetText("Edit")
-
--- Explains the mode before it is entered, and carries the persistence warning
--- where the decision is actually made rather than only in chat.
-EditToggle:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
-    GameTooltip:SetText(EditMode and "Finish editing" or "Edit this tab")
-    GameTooltip:AddLine(
-        "Click emotes to add or remove them from this tab. They are not "
-        .. "performed while editing, so a stray click is harmless.",
-        0.8, 0.8, 0.8, true)
-    if not EmoteMenu.settingsRestored then
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Changes will be lost when you reload.", 1, 0.5, 0.25, true)
-        GameTooltip:AddLine(
-            "This client is not restoring addon settings. It affects every "
-            .. "addon, not just this one.", 0.7, 0.7, 0.7, true)
-    end
-    GameTooltip:Show()
-end)
-EditToggle:SetScript("OnLeave", GameTooltip_Hide)
-
-local EditBanner = PageF:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-EditBanner:SetPoint("LEFT", SearchBox, "LEFT", 4, 0)
-EditBanner:SetPoint("RIGHT", SearchBox, "RIGHT", -4, 0)
-EditBanner:SetJustifyH("LEFT")
-EditBanner:Hide()
-
-local function MakeTabButton(tab)
-    local b = CreateFrame("Button", nil, TabStrip)
-    b:SetHeight(TAB_HEIGHT)
-    b.id = tab.id
-
-    b.bg = b:CreateTexture(nil, "BACKGROUND")
-    b.bg:SetAllPoints()
-
-    b.label = b:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    b.label:SetPoint("CENTER")
-    b.label:SetText(tab.label)
-    -- Width follows the label so a longer custom tab name still fits.
-    b:SetWidth(math.max(44, b.label:GetStringWidth() + 18))
-    return b
-end
-
-local function RefreshTabs()
-    for _, b in ipairs(TabButtons) do
-        local active = (b.id == ActiveTab)
-        b.bg:SetColorTexture(1, 1, 1, active and 0.16 or 0.05)
-        b.label:SetTextColor(active and 1 or 0.65, active and 0.82 or 0.65,
-                             active and 0.25 or 0.65)
-    end
-    -- "All" is generated from the emote list, so there is nothing to edit.
-    -- Hidden rather than disabled: a greyed-out button invites "why can I
-    -- not click this?", while an absent one just reads as not applicable.
-    -- The tab strip keeps its width either way so the tabs do not shift
-    -- sideways as the button comes and goes.
-    local editable = ActiveTab ~= "all"
-    EditToggle:SetShown(editable)
-    EditToggle:SetText(EditMode and "Done" or "Edit")
-    EditBanner:SetShown(EditMode)
-    SearchBox:SetShown(not EditMode)
-    if EditMode then
-        local tab = TabById(ActiveTab)
-        local text = ("|cffffd100Editing %s|r  -- click emotes to add or remove")
-            :format(tab and tab.label or ActiveTab)
-        -- On screen for as long as the curating lasts, which a chat line
-        -- is not: chat scrolls away and is easily missed entirely.
-        if not EmoteMenu.settingsRestored then
-            text = text .. "   |cffff7f3fchanges will be lost on reload|r"
-        end
-        EditBanner:SetText(text)
-    end
-end
-
-----------------------------------------------------------------------
 -- Scrolling viewport
 ----------------------------------------------------------------------
 -- Deliberately built from bare ScrollFrame and Slider widgets rather than a
@@ -492,6 +527,229 @@ ScrollF:SetScript("OnMouseWheel", function(_, delta)
 end)
 
 ----------------------------------------------------------------------
+-- Tab strip
+----------------------------------------------------------------------
+-- Built by hand rather than from a Blizzard tab template: those differ between
+-- API generations, and the strip has to grow as the player adds tabs anyway.
+
+local ActiveTab = "all"
+-- Not saved: the default decides where the first open after logging in
+-- lands, and after that the panel returns to whatever tab was last used.
+local sessionTab = nil
+local EditMode = false
+local TabButtons = {}
+
+local TAB_TOP = 34
+local TabStrip = CreateFrame("Frame", nil, PageF)
+TabStrip:SetPoint("TOPLEFT", MARGIN_LEFT, -TAB_TOP)
+TabStrip:SetPoint("TOPRIGHT", -MARGIN_LEFT, -TAB_TOP)
+TabStrip:SetHeight(TAB_HEIGHT)
+
+-- The lock. Editing is off by default and has to be asked for, so a fast
+-- click can never quietly rearrange a tab.
+local EditToggle = CreateFrame("Button", nil, PageF, "UIPanelButtonTemplate")
+EditToggle:SetSize(64, TAB_HEIGHT)
+EditToggle:SetText("Edit")
+
+-- Explains the mode before it is entered, and carries the persistence warning
+-- where the decision is actually made rather than only in chat.
+EditToggle:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText(EditMode and "Finish editing" or "Edit this tab")
+    GameTooltip:AddLine(
+        "Click emotes to add or remove them from this tab. They are not "
+        .. "performed while editing, so a stray click is harmless.",
+        0.8, 0.8, 0.8, true)
+    if not EmoteMenu.settingsRestored then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Changes will be lost when you reload.", 1, 0.5, 0.25, true)
+        GameTooltip:AddLine(
+            "This client is not restoring addon settings. It affects every "
+            .. "addon, not just this one.", 0.7, 0.7, 0.7, true)
+    end
+    GameTooltip:Show()
+end)
+EditToggle:SetScript("OnLeave", GameTooltip_Hide)
+
+local DeleteTab = CreateFrame("Button", nil, PageF, "UIPanelButtonTemplate")
+DeleteTab:SetSize(80, TAB_HEIGHT)
+DeleteTab:SetText("Delete tab")
+DeleteTab:Hide()
+
+-- Hand-built checkbox. UICheckButtonTemplate exists on both targets but
+-- brings its own sizing and art; this only needs a box and a tick.
+local DefaultCheck = CreateFrame("Button", nil, PageF)
+DefaultCheck:SetHeight(TAB_HEIGHT)
+DefaultCheck:Hide()
+
+DefaultCheck.box = DefaultCheck:CreateTexture(nil, "BACKGROUND")
+DefaultCheck.box:SetSize(13, 13)
+DefaultCheck.box:SetPoint("LEFT", 0, 0)
+DefaultCheck.box:SetColorTexture(1, 1, 1, 0.14)
+
+DefaultCheck.tick = DefaultCheck:CreateTexture(nil, "ARTWORK")
+DefaultCheck.tick:SetSize(7, 7)
+DefaultCheck.tick:SetPoint("CENTER", DefaultCheck.box, "CENTER")
+DefaultCheck.tick:SetColorTexture(0.98, 0.82, 0.25, 1)
+DefaultCheck.tick:Hide()
+
+DefaultCheck.label = DefaultCheck:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+DefaultCheck.label:SetPoint("LEFT", DefaultCheck.box, "RIGHT", 5, 0)
+DefaultCheck.label:SetText("Open this tab by default")
+DefaultCheck:SetWidth(13 + 5 + DefaultCheck.label:GetStringWidth() + 4)
+
+DefaultCheck:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText("Open this tab by default")
+    GameTooltip:AddLine("Which tab the panel starts on each time you log in. "
+        .. "While playing it reopens on whichever tab you used last.",
+        0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+end)
+DefaultCheck:SetScript("OnLeave", GameTooltip_Hide)
+
+local EditBanner = PageF:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+EditBanner:SetPoint("LEFT", SearchBox, "LEFT", 4, 0)
+EditBanner:SetPoint("RIGHT", SearchBox, "RIGHT", -4, 0)
+EditBanner:SetJustifyH("LEFT")
+EditBanner:Hide()
+
+local TabPool = {}
+
+local function MakeTabButton(tab, index)
+    local b = TabPool[index]
+    if not b then
+        b = CreateFrame("Button", nil, TabStrip)
+        b:SetHeight(TAB_HEIGHT)
+        b.bg = b:CreateTexture(nil, "BACKGROUND")
+        b.bg:SetAllPoints()
+        b.label = b:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        b.label:SetPoint("CENTER")
+        b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        TabPool[index] = b
+    end
+    b.id = tab.id
+    b.isAdd = nil
+
+    b.label:SetText(tab.label)
+    -- Width follows the label so a longer custom tab name still fits.
+    b:SetWidth(math.max(40, b.label:GetStringWidth() + 18))
+    return b
+end
+
+-- The header grows with the number of tab rows, so everything below it is
+-- anchored against a value rather than a constant.
+local contentTop = CONTENT_TOP
+local tabRows = 1
+
+local function HeaderHeight(rows)
+    return TAB_TOP + rows * (TAB_HEIGHT + TAB_GAP) + SEARCH_HEIGHT + 12
+end
+
+-- Lay the tabs out left to right, wrapping when the row runs out of width.
+-- Wrapping rather than shrinking or scrolling: shrinking makes labels
+-- unreadable and scrolling hides tabs behind a control nobody looks for, while
+-- a second row costs only the height it uses.
+local function LayoutTabs()
+    local avail = math.max(60, TabStrip:GetWidth())
+    local x, row = 0, 0
+    for _, b in ipairs(TabButtons) do
+        if not b:IsShown() then
+        elseif x > 0 and x + b:GetWidth() > avail then
+            row = row + 1
+            x = 0
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", 0, -row * (TAB_HEIGHT + TAB_GAP))
+            x = b:GetWidth() + TAB_GAP
+        else
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", x, -row * (TAB_HEIGHT + TAB_GAP))
+            x = x + b:GetWidth() + TAB_GAP
+        end
+    end
+    tabRows = row + 1
+    TabStrip:SetHeight(tabRows * (TAB_HEIGHT + TAB_GAP))
+
+    local newTop = HeaderHeight(tabRows)
+    if newTop ~= contentTop then
+        contentTop = newTop
+        ScrollF:ClearAllPoints()
+        ScrollF:SetPoint("TOPLEFT", MARGIN_LEFT, -contentTop)
+        ScrollF:SetPoint("BOTTOMRIGHT",
+            -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP), MARGIN_BOTTOM)
+    end
+    local searchTop = -(TAB_TOP + tabRows * (TAB_HEIGHT + TAB_GAP) + 4)
+    local room = PageF:GetWidth() - (MARGIN_LEFT * 2)
+        - SCROLLBAR_WIDTH - SCROLLBAR_GAP - COUNT_WIDTH
+    SearchBox:ClearAllPoints()
+    SearchBox:SetPoint("TOPLEFT", MARGIN_LEFT, searchTop)
+    SearchBox:SetWidth(math.max(80, math.min(SEARCH_MAX_WIDTH, room)))
+end
+
+local function RefreshTabs()
+    for _, b in ipairs(TabButtons) do
+        local active = (b.id == ActiveTab)
+        if b.isAdd then
+            b.bg:SetColorTexture(1, 1, 1, 0.05)
+            b.label:SetTextColor(0.65, 0.65, 0.65)
+        else
+            b.bg:SetColorTexture(1, 1, 1, active and 0.16 or 0.05)
+            b.label:SetTextColor(active and 1 or 0.65, active and 0.82 or 0.65,
+                                 active and 0.25 or 0.65)
+        end
+    end
+    -- "All" is generated from the emote list, so there is nothing to edit.
+    -- Hidden rather than disabled: a greyed-out button invites "why can I
+    -- not click this?", while an absent one just reads as not applicable.
+    -- The tab strip keeps its width either way so the tabs do not shift
+    -- sideways as the button comes and goes.
+    local editable = ActiveTab ~= "all"
+    EditToggle:SetShown(editable)
+    EditToggle:SetText(EditMode and "Done" or "Edit")
+    EditToggle:ClearAllPoints()
+    EditToggle:SetPoint("TOPRIGHT", -MARGIN_LEFT,
+        -(TAB_TOP + tabRows * (TAB_HEIGHT + TAB_GAP) + 4))
+    -- Deleting is editing, so it only appears in edit mode. That keeps the
+    -- browsing state to a single button and puts the destructive action out of
+    -- reach of an accidental click.
+    DeleteTab:SetShown(EditMode and ActiveTab ~= "all")
+    DeleteTab:ClearAllPoints()
+    DeleteTab:SetPoint("RIGHT", EditToggle, "LEFT", -4, 0)
+
+    local showCheck = EditMode and ActiveTab ~= "all"
+    DefaultCheck:SetShown(showCheck)
+    DefaultCheck:ClearAllPoints()
+    DefaultCheck:SetPoint("TOPLEFT", MARGIN_LEFT,
+        -(TAB_TOP + tabRows * (TAB_HEIGHT + TAB_GAP) + 4))
+    DefaultCheck.tick:SetShown(EmoteMenu.DefaultTab == ActiveTab)
+
+    if showCheck then
+        local spare = PageF:GetWidth() - (MARGIN_LEFT * 2) - 150   -- Edit + Delete
+        local labelled = spare > (DefaultCheck.label:GetStringWidth() + 140)
+        DefaultCheck.label:SetShown(labelled)
+        DefaultCheck:SetWidth(labelled
+            and (13 + 5 + DefaultCheck.label:GetStringWidth() + 4) or 13)
+    end
+
+    EditBanner:ClearAllPoints()
+    EditBanner:SetPoint("LEFT", DefaultCheck, "RIGHT", 12, 0)
+    EditBanner:SetPoint("RIGHT", DeleteTab, "LEFT", -8, 0)
+    EditBanner:SetShown(EditMode)
+    SearchBox:SetShown(not EditMode)
+    if EditMode then
+        local tab = TabById(ActiveTab)
+        local text = ("|cffffd100Editing %s|r  -- click emotes to add or remove")
+            :format(tab and tab.label or ActiveTab)
+        -- On screen for as long as the curating lasts, which a chat line
+        -- is not: chat scrolls away and is easily missed entirely.
+        if not EmoteMenu.settingsRestored then
+            text = text .. "   |cffff7f3fchanges will be lost on reload|r"
+        end
+        EditBanner:SetText(text)
+    end
+end
+
+----------------------------------------------------------------------
 -- Resize grip
 ----------------------------------------------------------------------
 local Grip = CreateFrame("Button", nil, PageF)
@@ -502,12 +760,14 @@ Grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight"
 Grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
 
 Grip:SetScript("OnMouseDown", function()
+    AnchorTopLeft(PageF)
     PageF:StartSizing("BOTTOMRIGHT")
 end)
 Grip:SetScript("OnMouseUp", function()
     PageF:StopMovingOrSizing()
     EmoteMenu.PanelW = math.floor(PageF:GetWidth() + 0.5)
     EmoteMenu.PanelH = math.floor(PageF:GetHeight() + 0.5)
+    SavePlacement(PageF)
 end)
 
 ----------------------------------------------------------------------
@@ -685,7 +945,7 @@ end
 
 function ShowEmoteMenu(button, entry)
     local n = 0
-    for _, tab in ipairs(TABS) do
+    for _, tab in ipairs(AllTabs()) do
         if not tab.fixed then
             n = n + 1
             local row = ContextRow(n)
@@ -846,24 +1106,197 @@ function ApplyFilter(text)
 end
 EmoteMenu.ApplyFilter = ApplyFilter
 
+----------------------------------------------------------------------
+-- Tab management
+----------------------------------------------------------------------
+-- A small modal built by hand. StaticPopup exists on both targets but its
+-- behaviour and styling differ, and this needs only a prompt and a confirm.
+local Modal = CreateFrame("Frame", nil, UIParent)
+Modal:SetFrameStrata("FULLSCREEN_DIALOG")
+Modal:SetSize(300, 120)
+Modal:SetPoint("CENTER", 0, 120)
+Modal:EnableMouse(true)
+Modal:Hide()
+
+Modal.bg = Modal:CreateTexture(nil, "BACKGROUND")
+Modal.bg:SetAllPoints()
+Modal.bg:SetColorTexture(0.04, 0.04, 0.04, 0.97)
+
+Modal.title = Modal:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+Modal.title:SetPoint("TOP", 0, -14)
+
+Modal.body = Modal:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+Modal.body:SetPoint("TOPLEFT", 16, -42)
+Modal.body:SetPoint("TOPRIGHT", -16, -42)
+Modal.body:SetJustifyH("LEFT")
+
+Modal.input = CreateFrame("EditBox", nil, Modal)
+Modal.input:SetPoint("TOPLEFT", 16, -44)
+Modal.input:SetPoint("TOPRIGHT", -16, -44)
+Modal.input:SetHeight(20)
+Modal.input:SetAutoFocus(true)
+Modal.input:SetFontObject("GameFontHighlightSmall")
+Modal.input:SetTextInsets(6, 6, 0, 0)
+Modal.input:SetMaxLetters(18)
+Modal.input.bg = Modal.input:CreateTexture(nil, "BACKGROUND")
+Modal.input.bg:SetAllPoints()
+Modal.input.bg:SetColorTexture(1, 1, 1, 0.08)
+
+Modal.error = Modal:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+Modal.error:SetPoint("TOPLEFT", 16, -68)
+Modal.error:SetTextColor(1, 0.45, 0.35)
+
+Modal.accept = CreateFrame("Button", nil, Modal, "UIPanelButtonTemplate")
+Modal.accept:SetSize(100, 22)
+Modal.accept:SetPoint("BOTTOMRIGHT", -16, 14)
+
+Modal.cancel = CreateFrame("Button", nil, Modal, "UIPanelButtonTemplate")
+Modal.cancel:SetSize(100, 22)
+Modal.cancel:SetPoint("BOTTOMLEFT", 16, 14)
+Modal.cancel:SetText("Cancel")
+Modal.cancel:SetScript("OnClick", function() Modal:Hide() end)
+Modal:SetScript("OnHide", function(self) self.input:ClearFocus() end)
+
+local function ShowPrompt(opts)
+    Modal.title:SetText(opts.title)
+    Modal.error:SetText("")
+    Modal.accept:SetText(opts.accept or "OK")
+    Modal.input:SetShown(opts.input == true)
+    Modal.body:SetShown(opts.input ~= true)
+    if opts.input then
+        Modal.input:SetText("")
+    else
+        Modal.body:SetText(opts.body or "")
+    end
+    Modal.accept:SetScript("OnClick", function()
+        local err = opts.onAccept(Modal.input:GetText())
+        if err then Modal.error:SetText(err) else Modal:Hide() end
+    end)
+    Modal.input:SetScript("OnEnterPressed", Modal.accept:GetScript("OnClick"))
+    Modal.input:SetScript("OnEscapePressed", function() Modal:Hide() end)
+    Modal:Show()
+    if opts.input then Modal.input:SetFocus() end
+end
+EmoteMenu.ShowPrompt = ShowPrompt
+
 -- Tab buttons are created here rather than with the strip because selecting
 -- one has to re-run the filter, which is defined above.
-do
-    local x = 0
-    for _, tab in ipairs(TABS) do
-        local b = MakeTabButton(tab)
-        b:SetPoint("TOPLEFT", x, 0)
-        x = x + b:GetWidth() + TAB_GAP
-        b:SetScript("OnClick", function(self)
-            if ActiveTab == self.id then return end
-            ActiveTab = self.id
+local RebuildTabStrip
+
+local function SelectTab(id)
+    if ActiveTab == id then return end
+    ActiveTab = id
+    sessionTab = id
+    EditMode = false
+    RefreshTabs()
+    LayoutTabs()
+    ApplyFilter(SearchBox:GetText())
+end
+EmoteMenu.SelectTab = SelectTab
+
+local function PromptNewTab()
+    ShowPrompt({
+        title = "New tab",
+        accept = "Create",
+        input = true,
+        onAccept = function(text)
+            local tab, err = EmoteMenu:AddTab(text)
+            if not tab then return err end
+            EmoteMenu:WarnIfNotPersisting()
+            RebuildTabStrip()
+            SelectTab(tab.id)
+        end,
+    })
+end
+
+local function PromptDeleteTab()
+    local tab = TabById(ActiveTab)
+    if not tab or tab.fixed then return end
+    -- Say at the point of deletion how to undo it, rather than leaving someone
+    -- to discover later that a shipped tab was recoverable all along.
+    local body
+    if EmoteMenu:IsCustomTab(ActiveTab) then
+        body = ("Delete \"%s\" and everything in it? The emotes themselves are "
+            .. "not affected, but the tab cannot be brought back."):format(tab.label)
+    else
+        body = ("Remove \"%s\"? The emotes themselves are not affected, and you "
+            .. "can bring the default tabs back by right-clicking the + tab.")
+            :format(tab.label)
+    end
+    ShowPrompt({
+        title = "Delete tab",
+        accept = "Delete",
+        body = body,
+        onAccept = function()
+            local id = ActiveTab
+            ActiveTab = "all"
             EditMode = false
+            EmoteMenu:RemoveTab(id)
+            RebuildTabStrip()
             RefreshTabs()
+            LayoutTabs()
             ApplyFilter(SearchBox:GetText())
-        end)
+        end,
+    })
+end
+
+function RebuildTabStrip()
+    for _, b in ipairs(TabPool) do b:Hide() end
+    TabButtons = {}
+
+    local n = 0
+    for _, tab in ipairs(AllTabs()) do
+        n = n + 1
+        local b = MakeTabButton(tab, n)
+        b:SetScript("OnClick", function(self) SelectTab(self.id) end)
+        b:Show()
         TabButtons[#TabButtons + 1] = b
     end
+
+    -- A trailing "+" reads as "there is room for more" without needing a label.
+    local add = MakeTabButton({ id = "__add", label = "+" }, n + 1)
+    add.isAdd = true
+    add:SetWidth(28)
+    add:SetScript("OnClick", function(_, mouseButton)
+        if mouseButton ~= "RightButton" then
+            PromptNewTab()
+        elseif EmoteMenu:HasHiddenTabs() then
+            ShowPrompt({
+                title = "Restore default tabs",
+                accept = "Restore",
+                body = "Bring back the default tabs you removed, with their "
+                    .. "original contents? Your own tabs are not affected.",
+                onAccept = function()
+                    EmoteMenu:RestoreDefaultTabs()
+                    RebuildTabStrip()
+                    RefreshTabs()
+                    LayoutTabs()
+                end,
+            })
+        end
+    end)
+    add:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:SetText("New tab")
+        if EmoteMenu:HasHiddenTabs() then
+            GameTooltip:AddLine("Right-click to restore the default tabs you removed.",
+                0.8, 0.8, 0.8, true)
+        end
+        GameTooltip:Show()
+    end)
+    add:SetScript("OnLeave", GameTooltip_Hide)
+    add:Show()
+    TabButtons[#TabButtons + 1] = add
 end
+
+DeleteTab:SetScript("OnClick", PromptDeleteTab)
+DefaultCheck:SetScript("OnClick", function()
+    if ActiveTab == "all" then return end
+    EmoteMenu.DefaultTab = (EmoteMenu.DefaultTab == ActiveTab) and "all" or ActiveTab
+    EmoteMenu:WarnIfNotPersisting()
+    RefreshTabs()
+end)
+RebuildTabStrip()
 
 EditToggle:SetScript("OnClick", function()
     if ActiveTab == "all" then return end
@@ -974,7 +1407,11 @@ end
 -- Reflow while the grip is dragged. Guarded on the buttons existing because
 -- this also fires during the SetSize call at load, long before that.
 PageF:SetScript("OnSizeChanged", function()
-    if buttonsBuilt then Reflow() end
+    if not buttonsBuilt then return end
+    -- A narrower panel may push tabs onto another row, which moves
+    -- everything below them.
+    LayoutTabs()
+    Reflow(true)
 end)
 
 -- Restore size and position, then build and lay out the contents
@@ -988,10 +1425,15 @@ PageF:SetScript("OnShow", function(self)
     self:ClearAllPoints()
     self:SetPoint(EmoteMenu.MainPanelA, UIParent, EmoteMenu.MainPanelR, EmoteMenu.MainPanelX, EmoteMenu.MainPanelY)
     BuildEmoteButtons()
+    ActiveTab = sessionTab or EmoteMenu.DefaultTab or "all"
+    EditMode = false
+    if not TabById(ActiveTab) then ActiveTab = "all" end
+    RebuildTabStrip()
     -- Reapply rather than Reflow: this rebuilds the visible set (which is
     -- empty on the very first show) and forces a full relayout, which also
     -- covers a height change that leaves the column count alone.
     RefreshTabs()
+    LayoutTabs()
     ApplyFilter(SearchBox:GetText())
 end)
 
@@ -1081,6 +1523,10 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         -- Panel size
         EmoteMenu:LoadVarNum("PanelW", DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH)
         EmoteMenu:LoadVarNum("PanelH", DEFAULT_HEIGHT, MIN_HEIGHT, MAX_HEIGHT)
+        -- Falls back to All if the stored tab has since been deleted.
+        local wanted = EmoteMenuDB.DefaultTab
+        EmoteMenu.DefaultTab = (type(wanted) == "string" and TabById(wanted))
+            and wanted or "all"
 
         EmoteMenu:CreateMiniMapIcon()
 
@@ -1097,6 +1543,7 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         EmoteMenuDB.MainPanelY = EmoteMenu.MainPanelY
         EmoteMenuDB.PanelW = EmoteMenu.PanelW
         EmoteMenuDB.PanelH = EmoteMenu.PanelH
+        EmoteMenuDB.DefaultTab = EmoteMenu.DefaultTab
         EmoteMenuDB[SETTINGS_MARKER] = time and time() or 1
     end
 end)
