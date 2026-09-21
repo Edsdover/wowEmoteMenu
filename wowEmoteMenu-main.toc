@@ -1,11 +1,15 @@
-## Interface: 11500
+## Interface: 11509, 16001
 ## Author: Edwin Dover
-## Version: 0.1.0
+## Version: 1.0.0
 ## Title: Emote Menu
 ## Notes: Menu for all emotes
-
+## IconTexture: Interface\Icons\ability_seal
+## Category: Social
 ## SavedVariables: EmoteMenuDB
 
-Libs\libs.xml
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 wowEmoteMenuStore.lua
 wowEmoteMenu.lua
