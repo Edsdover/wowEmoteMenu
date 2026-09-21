@@ -279,6 +279,24 @@ local function ShowTooltip(self)
     GameTooltip:SetText(self.tiptext, nil, nil, nil, nil, true)
 end
 
+-- Assemble a button's tooltip from whichever lines the emote actually has.
+-- Three cases beyond the ordinary one:
+--   * emotes that ignore the target have only the untargeted line
+--   * a few (promise) print only when they have a target
+--   * sit, stand, train and mountspecial perform an action but print nothing,
+--     so fall back to naming the slash command rather than showing a blank box
+local function BuildTooltip(entry)
+    local plain, targeted = entry.noTargetText, entry.targetText
+    if plain ~= "" and targeted ~= "" then
+        return plain .. "|n|n|cff00AAFF" .. targeted
+    elseif plain ~= "" then
+        return plain
+    elseif targeted ~= "" then
+        return "|cff00AAFF" .. targeted
+    end
+    return entry.cmd ~= "" and entry.cmd or entry.emote
+end
+
 ----------------------------------------------------------------------
 -- Layout
 ----------------------------------------------------------------------
@@ -364,15 +382,15 @@ local function BuildEmoteButtons()
         eBtn:SetText(emoteString)
         buttons[i] = eBtn
 
-        -- Some emotes have no targeted form. Force no target and drop the
-        -- second tooltip line for those.
-        if entry.targetText == "" then
-            eBtn.tiptext = entry.noTargetText
+        -- An empty targetText means the emote ignores the target, so force no
+        -- target rather than letting the server silently drop it.
+        local ignoresTarget = entry.targetText == ""
+        eBtn.tiptext = BuildTooltip(entry)
+        if ignoresTarget then
             eBtn:SetScript("OnClick", function()
                 DoEmote(emoteString, "none")
             end)
         else
-            eBtn.tiptext = entry.noTargetText .. "|n|n|cff00AAFF" .. entry.targetText
             eBtn:SetScript("OnClick", function()
                 DoEmote(emoteString)
             end)

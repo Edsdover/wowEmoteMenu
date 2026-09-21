@@ -7,6 +7,11 @@ ADDON = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wowstub.lua")
 ADDON_FOLDER = "wowEmoteMenu-main"
 
+import re as _re
+_STORE = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "wowEmoteMenuStore.lua"), encoding="utf-8").read()
+EMOTE_COUNT = len(_re.findall(r'^        emote = ', _STORE, _re.M))
+
 failures = []
 def check(label, cond, detail=""):
     if cond:
@@ -66,7 +71,7 @@ check("no stray 'emoteTable' global", g["emoteTable"] is None)
 check("frame named EmoteMenuFrame exists", g["EmoteMenuFrame"] is not None)
 check("UISpecialFrames has EmoteMenuFrame",
       "EmoteMenuFrame" in list(L.eval("UISpecialFrames").values()))
-check("emote data on core table", L.eval("#__core.emoteTable") == 251,
+check(f"emote data on core table ({EMOTE_COUNT})", L.eval("#__core.emoteTable") == EMOTE_COUNT,
       f"count={L.eval('#__core.emoteTable')}")
 
 # Slash commands
@@ -108,7 +113,7 @@ end)()""") is True)
 L.execute("SlashCmdList['EMOTE_MENU']('')")
 check("panel is shown after slash command", L.eval("EmoteMenuFrame:IsShown()") is True)
 after = L.eval("#__frames")
-check("buttons built on first show", after - before >= 251, f"created={after - before}")
+check("buttons built on first show", after - before >= EMOTE_COUNT, f"created={after - before}")
 
 # Reopening must not duplicate buttons
 L.execute("SlashCmdList['EMOTE_MENU']('')")
@@ -133,12 +138,12 @@ for _, f in ipairs(__frames) do
     end
 end
 """)
-check("clicked every emote button", L.eval("__buttonCount") == 251, f"n={L.eval('__buttonCount')}")
+check("clicked every emote button", L.eval("__buttonCount") == EMOTE_COUNT, f"n={L.eval('__buttonCount')}")
 check("no errors clicking buttons", L.eval("#__clickErrors") == 0,
       list(L.eval("__clickErrors").values())[:3])
 check("no errors showing tooltips", L.eval("#__tipErrors") == 0,
       list(L.eval("__tipErrors").values())[:3])
-check("DoEmote fired once per button", L.eval("#__emotes") == 251)
+check("DoEmote fired once per button", L.eval("#__emotes") == EMOTE_COUNT)
 check("all DoEmote tokens are lowercase",
       L.eval("""(function()
           for _, e in ipairs(__emotes) do
@@ -165,8 +170,9 @@ EM = core.EmoteMenu
 F = L.globals()["EmoteMenuFrame"]
 
 # Pure layout arithmetic, independent of any frame.
-for viewport, count, want_cols in ((850, 251, 10), (255, 251, 3), (85, 251, 1),
-                                   (40, 251, 1), (1700, 251, 20)):
+for viewport, count, want_cols in ((850, EMOTE_COUNT, 10), (255, EMOTE_COUNT, 3),
+                                   (85, EMOTE_COUNT, 1), (40, EMOTE_COUNT, 1),
+                                   (1700, EMOTE_COUNT, 20)):
     cols, rows = EM.ComputeGrid(viewport, count)
     import math as _m
     ok = cols == want_cols and rows == _m.ceil(count / want_cols)
@@ -236,7 +242,7 @@ placed = L.eval("""(function()
     end
     return n
 end)()""")
-check("all 251 buttons still positioned", placed == 251, f"placed={placed}")
+check(f"all {EMOTE_COUNT} buttons still positioned", placed == EMOTE_COUNT, f"placed={placed}")
 
 check("buttons live in the scroll child, not the panel", L.eval("""(function()
     for _, f in ipairs(__frames) do
