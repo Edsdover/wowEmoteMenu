@@ -60,7 +60,7 @@ if (-not (Test-Path $addons)) { throw "AddOns path does not exist: $addons" }
 $live = Join-Path $addons $FolderName
 
 # Repo plumbing that must never reach the AddOns folder.
-$exclude = @('.git', '.github', '.claude', '.gitignore', '.gitattributes', 'sync.ps1', 'tests', 'tools', 'docs', 'CHANGELOG.md')
+$exclude = @('.git', '.github', '.claude', '.gitignore', '.gitattributes', '.pkgmeta', 'sync.ps1', 'tests', 'tools', 'docs', 'CHANGELOG.md')
 
 if (Test-Path $live) {
     $item = Get-Item $live -Force
