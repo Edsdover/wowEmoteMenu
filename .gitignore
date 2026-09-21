@@ -14,3 +14,7 @@ desktop.ini
 
 # Packaging output
 .release/
+
+# Python (test harness)
+__pycache__/
+*.pyc

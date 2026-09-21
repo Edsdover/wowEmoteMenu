@@ -1,0 +1,376 @@
+"""Load the Emote Menu addon into a Lua 5.1 runtime against a stubbed WoW API
+and exercise the paths a player actually hits."""
+import sys, os
+from lupa.lua51 import LuaRuntime
+
+ADDON = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wowstub.lua")
+ADDON_FOLDER = "wowEmoteMenu-main"
+
+failures = []
+def check(label, cond, detail=""):
+    if cond:
+        print(f"  PASS  {label}")
+    else:
+        failures.append(label)
+        print(f"  FAIL  {label}  {detail}")
+
+def new_runtime(saved_vars_lua="nil"):
+    L = LuaRuntime(unpack_returned_tuples=True)
+    L.execute(open(STUB, encoding="utf-8").read())
+    L.execute(f"EmoteMenuDB = {saved_vars_lua}")
+    # Load files in TOC order, each with the (addonName, core) vararg WoW passes.
+    L.execute("__core = {}")
+    files = [
+        "Libs/LibStub/LibStub.lua",
+        "Libs/CallbackHandler-1.0/CallbackHandler-1.0.lua",
+        "Libs/LibDataBroker-1.1/LibDataBroker-1.1.lua",
+        "Libs/LibDBIcon-1.0/LibDBIcon-1.0.lua",
+        "wowEmoteMenuStore.lua",
+        "wowEmoteMenu.lua",
+    ]
+    loader = L.eval("""
+        function(path, addonName, core)
+            local f = assert(loadfile(path))
+            return f(addonName, core)
+        end
+    """)
+    for rel in files:
+        if rel == "wowEmoteMenu.lua":
+            # Real LibDBIcon loads fine (proven above) but needs real minimap
+            # widgets to Register(). Swap in a recording stub so this test stays
+            # focused on the addon's own integration with it.
+            L.execute("""
+                __dbicon = { registered = {}, shown = {}, hidden = {} }
+                local fake = {
+                    Register = function(self, name, obj, db)
+                        assert(type(db) == "table", "LibDBIcon got a non-table db")
+                        __dbicon.registered[name] = { obj = obj, db = db }
+                    end,
+                    Show = function(self, name) table.insert(__dbicon.shown, name) end,
+                    Hide = function(self, name) table.insert(__dbicon.hidden, name) end,
+                }
+                LibStub.libs["LibDBIcon-1.0"] = fake
+            """)
+        loader(os.path.join(ADDON, rel).replace("\\", "/"), ADDON_FOLDER, L.globals()["__core"])
+    return L
+
+
+print("== 1. fresh install ==")
+L = new_runtime("nil")
+g = L.globals()
+check("all files loaded without error", True)
+check("no stray 'void' global", g["void"] is None, f"void={g['void']}")
+check("no generic 'EmoteMenu' global", g["EmoteMenu"] is None, f"EmoteMenu={g['EmoteMenu']}")
+check("no stray 'emoteTable' global", g["emoteTable"] is None)
+check("frame named EmoteMenuFrame exists", g["EmoteMenuFrame"] is not None)
+check("UISpecialFrames has EmoteMenuFrame",
+      "EmoteMenuFrame" in list(L.eval("UISpecialFrames").values()))
+check("emote data on core table", L.eval("#__core.emoteTable") == 251,
+      f"count={L.eval('#__core.emoteTable')}")
+
+# Slash commands
+slash = L.eval("SlashCmdList")
+check("registered SlashCmdList['EMOTE_MENU']", slash["EMOTE_MENU"] is not None)
+check("did NOT register /emote", g["SLASH_Emote_Menu1"] is None and
+      L.eval('SLASH_EMOTE_MENU1') == "/emotemenu",
+      f"SLASH_EMOTE_MENU1={L.eval('SLASH_EMOTE_MENU1')}")
+check("second alias is /emm", L.eval("SLASH_EMOTE_MENU2") == "/emm")
+
+# Buttons must not exist before first show
+before = L.eval("#__frames")
+check("buttons are lazy (few frames before show)", before < 30, f"frames={before}")
+
+# Fire ADDON_LOADED with the real folder name
+L.execute(f"""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+""")
+check("minimap settings migrated into subtable", L.eval("type(EmoteMenuDB.minimap)") == "table")
+check("default minimapPos applied", L.eval("EmoteMenuDB.minimap.minimapPos") == 204)
+check("defaults written to DB", L.eval("EmoteMenuDB.MainPanelA") == "CENTER")
+check("minimap icon registered with LibDBIcon",
+      L.eval("__dbicon.registered['Emote_Menu'] ~= nil"))
+check("LibDBIcon got the minimap subtable, not the DB root",
+      L.eval("__dbicon.registered['Emote_Menu'].db == EmoteMenuDB.minimap"))
+check("icon shown by default", L.eval("#__dbicon.shown") == 1)
+check("LDB OnClick toggles the panel", L.eval("""(function()
+    local obj = __dbicon.registered['Emote_Menu'].obj
+    local before = EmoteMenuFrame:IsShown()
+    obj.OnClick(obj, 'LeftButton')
+    local after = EmoteMenuFrame:IsShown()
+    obj.OnClick(obj, 'LeftButton')
+    return before ~= after and EmoteMenuFrame:IsShown() == before
+end)()""") is True)
+
+# Open the menu
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+check("panel is shown after slash command", L.eval("EmoteMenuFrame:IsShown()") is True)
+after = L.eval("#__frames")
+check("buttons built on first show", after - before >= 251, f"created={after - before}")
+
+# Reopening must not duplicate buttons
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+L.execute("SlashCmdList['EMOTE_MENU']('')")
+check("panel hidden then shown again", L.eval("EmoteMenuFrame:IsShown()") is True)
+check("buttons not rebuilt on reopen", L.eval("#__frames") == after,
+      f"{L.eval('#__frames')} vs {after}")
+
+print("\n== 2. every button clicks and tooltips ==")
+L.execute("""
+__clickErrors = {}
+__tipErrors = {}
+__buttonCount = 0
+for _, f in ipairs(__frames) do
+    if f.template == "UIPanelButtonTemplate" and f.scripts.OnClick then
+        __buttonCount = __buttonCount + 1
+        local ok, err = pcall(f.Click, f)
+        if not ok then table.insert(__clickErrors, tostring(err)) end
+        local ok2, err2 = pcall(f.Enter, f)
+        if not ok2 then table.insert(__tipErrors, tostring(err2)) end
+        pcall(f.Leave, f)
+    end
+end
+""")
+check("clicked every emote button", L.eval("__buttonCount") == 251, f"n={L.eval('__buttonCount')}")
+check("no errors clicking buttons", L.eval("#__clickErrors") == 0,
+      list(L.eval("__clickErrors").values())[:3])
+check("no errors showing tooltips", L.eval("#__tipErrors") == 0,
+      list(L.eval("__tipErrors").values())[:3])
+check("DoEmote fired once per button", L.eval("#__emotes") == 251)
+check("all DoEmote tokens are lowercase",
+      L.eval("""(function()
+          for _, e in ipairs(__emotes) do
+              if e.token ~= string.lower(e.token) then return e.token end
+          end
+          return true
+      end)()""") is True)
+notarget = L.eval("""(function()
+    local n = 0
+    for _, e in ipairs(__emotes) do if e.target == "none" then n = n + 1 end end
+    return n
+end)()""")
+# Derived from the data rather than hardcoded, so correcting an emote's
+# targetText cannot silently break this assertion.
+import re as _re
+_store = open(os.path.join(ADDON, "wowEmoteMenuStore.lua"), encoding="utf-8").read()
+_expected = len(_re.findall(r'targetText = ""', _store))
+check(f"{_expected} emotes forced to no-target", notarget == _expected,
+      f"n={notarget} expected={_expected}")
+
+print("\n== 2b. resize reflows the grid ==")
+core = L.globals()["__core"]
+EM = core.EmoteMenu
+F = L.globals()["EmoteMenuFrame"]
+
+# Pure layout arithmetic, independent of any frame.
+for viewport, count, want_cols in ((850, 251, 10), (255, 251, 3), (85, 251, 1),
+                                   (40, 251, 1), (1700, 251, 20)):
+    cols, rows = EM.ComputeGrid(viewport, count)
+    import math as _m
+    ok = cols == want_cols and rows == _m.ceil(count / want_cols)
+    check(f"ComputeGrid({viewport}px) -> {want_cols} cols", ok, f"got {cols} cols / {rows} rows")
+
+def grid_state():
+    """Distinct x offsets across the buttons = the live column count."""
+    return L.eval("""(function()
+        local xs, n = {}, 0
+        for _, f in ipairs(__frames) do
+            if f.template == "UIPanelButtonTemplate" and f.points and f.points.TOPLEFT then
+                local x = f.points.TOPLEFT.x
+                if xs[x] == nil then xs[x] = true; n = n + 1 end
+            end
+        end
+        return n
+    end)()""")
+
+check("default size lays out 10 columns", grid_state() == 10, f"got {grid_state()}")
+
+# Narrow the panel: fewer columns, more rows, scrollbar appears.
+F.Resize(F, 400, 540)
+check("narrowing reflows to fewer columns", grid_state() == 4, f"got {grid_state()}")
+
+# Widen it again.
+F.Resize(F, 1200, 540)
+check("widening reflows to more columns", grid_state() == 13, f"got {grid_state()}")
+
+# Back to default.
+F.Resize(F, 886, 540)
+check("returns to 10 columns at default width", grid_state() == 10, f"got {grid_state()}")
+
+def scrollbar_shown():
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.frameType == "Slider" then return f.shown == true end
+        end
+        return nil
+    end)()""")
+
+def scroll_max():
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.frameType == "Slider" then return f.maxVal or 0 end
+        end
+    end)()""")
+
+check("no scrollbar when everything fits", scrollbar_shown() is False,
+      f"shown={scrollbar_shown()} max={scroll_max()}")
+
+F.Resize(F, 886, 300)
+check("scrollbar appears when too short", scrollbar_shown() is True,
+      f"shown={scrollbar_shown()} max={scroll_max()}")
+check("scroll range is positive", scroll_max() > 0, f"max={scroll_max()}")
+
+F.Resize(F, 886, 540)
+check("scrollbar hides again when it fits", scrollbar_shown() is False,
+      f"shown={scrollbar_shown()}")
+
+# Every button must still be reachable after all that resizing.
+placed = L.eval("""(function()
+    local n = 0
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" and f.points and f.points.TOPLEFT then
+            n = n + 1
+        end
+    end
+    return n
+end)()""")
+check("all 251 buttons still positioned", placed == 251, f"placed={placed}")
+
+check("buttons live in the scroll child, not the panel", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" then
+            return f.parent ~= EmoteMenuFrame and f.parent ~= nil
+        end
+    end
+end)()""") is True)
+
+check("panel is resizable with bounds set", L.eval(
+    "EmoteMenuFrame.resizable == true and EmoteMenuFrame.resizeBounds ~= nil"))
+
+print("\n== 3. drag saves position, logout persists it ==")
+L.execute("""
+local f = EmoteMenuFrame
+f.scripts.OnDragStart(f)
+f.scripts.OnDragStop(f)
+for _, fr in ipairs(__frames) do
+    if fr:IsEventRegistered("PLAYER_LOGOUT") then fr:Fire("PLAYER_LOGOUT") end
+end
+""")
+check("drag wrote panel anchor", L.eval("EmoteMenuDB.MainPanelA") == "CENTER")
+check("drag wrote panel x", L.eval("EmoteMenuDB.MainPanelX") == 12, L.eval("EmoteMenuDB.MainPanelX"))
+check("drag wrote panel y", L.eval("EmoteMenuDB.MainPanelY") == -34, L.eval("EmoteMenuDB.MainPanelY"))
+check("still no 'void' global after drag", L.globals()["void"] is None)
+
+print("\n== 3b. panel size persists ==")
+F = L.globals()["EmoteMenuFrame"]
+F.Resize(F, 640, 400)
+F.scripts.OnMouseUp = None
+# Drive the grip the way a mouse-up after dragging would.
+L.execute("""
+for _, f in ipairs(__frames) do
+    if f.scripts and f.scripts.OnMouseUp and f.parent == EmoteMenuFrame then
+        f.scripts.OnMouseUp(f)
+    end
+end
+""")
+check("grip records the new width", L.eval("__core.EmoteMenu.PanelW") == 640,
+      L.eval("__core.EmoteMenu.PanelW"))
+check("grip records the new height", L.eval("__core.EmoteMenu.PanelH") == 400,
+      L.eval("__core.EmoteMenu.PanelH"))
+L.execute("""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("PLAYER_LOGOUT") then f:Fire("PLAYER_LOGOUT") end
+end
+""")
+check("size written to the DB", L.eval("EmoteMenuDB.PanelW") == 640 and
+      L.eval("EmoteMenuDB.PanelH") == 400,
+      f'{L.eval("EmoteMenuDB.PanelW")}x{L.eval("EmoteMenuDB.PanelH")}')
+
+print("\n== 4. upgrade from an old SavedVariables file ==")
+L2 = new_runtime("""{
+    ShowMinimapIcon = "On",
+    MapPosA = "CENTER", MapPosR = "CENTER",
+    MainPanelA = "TOPLEFT", MainPanelR = "TOPLEFT",
+    MainPanelX = 250, MainPanelY = -120,
+    minimapPos = 87.5, hide = false,
+}""")
+L2.execute(f"""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+""")
+check("old minimapPos migrated", L2.eval("EmoteMenuDB.minimap.minimapPos") == 87.5,
+      L2.eval("EmoteMenuDB.minimap.minimapPos"))
+check("old hide migrated", L2.eval("EmoteMenuDB.minimap.hide") is False)
+check("old root keys cleaned up", L2.eval("EmoteMenuDB.minimapPos") is None
+      and L2.eval("EmoteMenuDB.hide") is None)
+check("saved panel position preserved", L2.eval("EmoteMenuDB.MainPanelX") == 250)
+L2.execute("SlashCmdList['EMOTE_MENU']('')")
+check("panel opens at saved anchor",
+      L2.eval("EmoteMenuFrame.point[1]") == "TOPLEFT", L2.eval("EmoteMenuFrame.point[1]"))
+
+print("\n== 4b. a hidden icon stays hidden across the migration ==")
+L2b = new_runtime("""{ ShowMinimapIcon = "On", minimapPos = 12, hide = true }""")
+L2b.execute(f"""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+""")
+check("legacy hide=true migrated", L2b.eval("EmoteMenuDB.minimap.hide") is True,
+      L2b.eval("EmoteMenuDB.minimap.hide"))
+check("icon hidden, not shown", L2b.eval("#__dbicon.hidden") == 1 and L2b.eval("#__dbicon.shown") == 0,
+      f"shown={L2b.eval('#__dbicon.shown')} hidden={L2b.eval('#__dbicon.hidden')}")
+check("ShowMinimapIcon seeded to Off", L2b.eval("EmoteMenuDB.ShowMinimapIcon") == "Off",
+      L2b.eval("EmoteMenuDB.ShowMinimapIcon"))
+
+print("\n== 4c. a visible icon stays visible ==")
+L2c = new_runtime("""{ minimapPos = 12, hide = false }""")
+L2c.execute(f"""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+""")
+check("legacy hide=false migrated", L2c.eval("EmoteMenuDB.minimap.hide") is False)
+check("icon shown", L2c.eval("#__dbicon.shown") == 1 and L2c.eval("#__dbicon.hidden") == 0)
+check("ShowMinimapIcon stays On", L2c.eval("EmoteMenuDB.ShowMinimapIcon") == "On")
+
+print("\n== 5. corrupt SavedVariables fall back to defaults ==")
+L3 = new_runtime("""{
+    ShowMinimapIcon = "Maybe",
+    MainPanelA = "SIDEWAYS", MainPanelR = 42,
+    MainPanelX = "lots", MainPanelY = 99999,
+}""")
+L3.execute(f"""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+""")
+check("bad toggle rejected", L3.eval("EmoteMenuDB.ShowMinimapIcon") == "On")
+check("bad anchor rejected", L3.eval("EmoteMenuDB.MainPanelA") == "CENTER")
+check("non-string anchor rejected", L3.eval("EmoteMenuDB.MainPanelR") == "CENTER")
+check("non-number coord rejected", L3.eval("EmoteMenuDB.MainPanelX") == 0)
+check("out-of-range coord rejected", L3.eval("EmoteMenuDB.MainPanelY") == 0)
+L3.execute("SlashCmdList['EMOTE_MENU']('')")
+check("panel still opens with corrupt DB", L3.eval("EmoteMenuFrame:IsShown()") is True)
+
+print("\n== 6. folder renamed (the old bug) ==")
+L4 = new_runtime("nil")
+L4.execute("""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "SomeOtherAddon") end
+end
+""")
+ok, err = True, ""
+try:
+    L4.execute("SlashCmdList['EMOTE_MENU']('')")
+except Exception as e:
+    ok, err = False, str(e)[:160]
+check("opening before our ADDON_LOADED does not error", ok, err)
+
+print()
+if failures:
+    print(f"{len(failures)} FAILURE(S): " + ", ".join(failures))
+    sys.exit(1)
+print("All checks passed.")
