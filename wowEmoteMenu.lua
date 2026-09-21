@@ -14,6 +14,7 @@ local VALID_ANCHORS = {
     TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true,
 }
 local VALID_TOGGLES = { On = true, Off = true }
+local VALID_SORTS = { across = true, down = true }
 
 -- Defaults live on the table from the start so the panel can never be shown
 -- with a nil anchor, even if something goes wrong loading saved variables.
@@ -25,6 +26,8 @@ EmoteMenu.MainPanelR = "CENTER"
 EmoteMenu.MainPanelX = 0
 EmoteMenu.MainPanelY = 0
 EmoteMenu.DefaultTab = "all"
+EmoteMenu.SortOrder = "across"
+EmoteMenu.EscapeCloses = "On"
 
 ----------------------------------------------------------------------
 -- Saved variables
@@ -32,15 +35,20 @@ EmoteMenu.DefaultTab = "all"
 -- Each loader copies EmoteMenuDB into EmoteMenu, falling back to a default
 -- when the stored value is missing or malformed.
 
--- Load an "On"/"Off" variable
-function EmoteMenu:LoadVarChk(var, def)
+-- Load a string variable that has to be one of a known set of values
+function EmoteMenu:LoadVarSet(var, def, valid)
     local stored = EmoteMenuDB[var]
-    if type(stored) == "string" and VALID_TOGGLES[stored] then
+    if type(stored) == "string" and valid[stored] then
         self[var] = stored
     else
         self[var] = def
         EmoteMenuDB[var] = def
     end
+end
+
+-- Load an "On"/"Off" variable
+function EmoteMenu:LoadVarChk(var, def)
+    self:LoadVarSet(var, def, VALID_TOGGLES)
 end
 
 -- Load a numeric variable, clamped to a valid range
@@ -56,13 +64,7 @@ end
 
 -- Load an anchor point variable
 function EmoteMenu:LoadVarAnc(var, def)
-    local stored = EmoteMenuDB[var]
-    if type(stored) == "string" and VALID_ANCHORS[stored] then
-        self[var] = stored
-    else
-        self[var] = def
-        EmoteMenuDB[var] = def
-    end
+    self:LoadVarSet(var, def, VALID_ANCHORS)
 end
 
 -- Did anything we saved last session actually come back?
@@ -303,8 +305,15 @@ local DEFAULT_COLUMNS = 10
 
 -- Wide enough to carry the animation/sound markers at the right edge without
 -- squeezing the longest labels ('congratulate').
+-- The shipped size. The live values are EmoteMenu.ButtonW/ButtonH, which the
+-- options panel changes, so anything that lays out the grid must read those
+-- rather than these.
 local BUTTON_WIDTH = 100
 local BUTTON_HEIGHT = 18
+local MIN_BUTTON_W, MAX_BUTTON_W = 70, 180
+local MIN_BUTTON_H, MAX_BUTTON_H = 14, 30
+EmoteMenu.ButtonW = BUTTON_WIDTH
+EmoteMenu.ButtonH = BUTTON_HEIGHT
 -- 11px is a compromise: large enough for the speaker cone to survive
 -- downsampling, small enough that two of them plus the longest label
 -- ('congratulate') still fit across a button.
@@ -329,9 +338,12 @@ local SCROLLBAR_GAP = 4
 
 local MIN_COLUMNS = 3
 -- Narrow enough to be genuinely useful docked at the side of the screen, but
--- never so narrow that a button label has nowhere to go.
-local MIN_WIDTH = (BUTTON_WIDTH * MIN_COLUMNS) + (MARGIN_LEFT * 2) + SCROLLBAR_WIDTH + SCROLLBAR_GAP
-local MIN_HEIGHT = CONTENT_TOP + (BUTTON_HEIGHT * 4) + MARGIN_BOTTOM
+-- never so narrow that a button label has nowhere to go. Computed against the
+-- smallest button anyone can ask for, because that is the floor a saved panel
+-- width has to be allowed to reach; the live limit follows the current button
+-- size and is set by UpdateResizeLimits below.
+local MIN_WIDTH = (MIN_BUTTON_W * MIN_COLUMNS) + (MARGIN_LEFT * 2) + SCROLLBAR_WIDTH + SCROLLBAR_GAP
+local MIN_HEIGHT = CONTENT_TOP + (MIN_BUTTON_H * 4) + MARGIN_BOTTOM
 local MAX_WIDTH, MAX_HEIGHT = 2400, 1600
 
 -- Opening width is derived so the grid still shows DEFAULT_COLUMNS columns
@@ -355,7 +367,7 @@ EmoteMenu.PanelW = DEFAULT_WIDTH
 EmoteMenu.PanelH = DEFAULT_HEIGHT
 -- Exposed so the tests can assert against the real defaults.
 EmoteMenu.DEFAULT_WIDTH, EmoteMenu.DEFAULT_HEIGHT = DEFAULT_WIDTH, DEFAULT_HEIGHT
-EmoteMenu.BUTTON_WIDTH = BUTTON_WIDTH
+EmoteMenu.BUTTON_WIDTH = BUTTON_WIDTH   -- the default, for tests
 -- Panel width minus this is the usable grid width, which is what decides the
 -- column count.
 EmoteMenu.VIEWPORT_INSET = (MARGIN_LEFT * 2) + SCROLLBAR_WIDTH + SCROLLBAR_GAP
@@ -377,7 +389,32 @@ EmoteMenu.PageF = PageF
 
 -- Register with the Escape-to-close list. UISpecialFrames looks the frame up
 -- by name in _G, so the frame has to be named (it is, above).
-table.insert(UISpecialFrames, "EmoteMenuFrame")
+--
+-- Optional, because a menu someone wants parked on screen should not vanish
+-- the moment they press Escape for something else. Removing the entry rather
+-- than intercepting the key means Escape still reaches whatever else wants it.
+local function SetEscapeCloses(enabled)
+    local present = false
+    for i = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[i] == "EmoteMenuFrame" then
+            -- Walking backwards, the first hit is the one to keep; anything
+            -- earlier is a duplicate from an earlier toggle.
+            if present or not enabled then
+                table.remove(UISpecialFrames, i)
+            else
+                present = true
+            end
+        end
+    end
+    -- Put back at the front rather than the end. The game walks the list from
+    -- the end, so the options dialog -- registered after this at load and never
+    -- moved -- stays behind the panel and is the one Escape reaches first.
+    if enabled and not present then
+        table.insert(UISpecialFrames, 1, "EmoteMenuFrame")
+    end
+end
+EmoteMenu.SetEscapeCloses = SetEscapeCloses
+SetEscapeCloses(true)
 
 PageF:SetSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
 PageF:Hide()
@@ -386,7 +423,17 @@ PageF:SetClampedToScreen(true)
 PageF:EnableMouse(true)
 PageF:SetMovable(true)
 PageF:SetResizable(true)
-SetResizeLimits(PageF, MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH, MAX_HEIGHT)
+
+-- Three columns and four rows of whatever a button currently costs. The
+-- options panel can change that, so the limit is recalculated rather than
+-- fixed: at 180-wide buttons the old floor would have shown a single column.
+local function UpdateResizeLimits()
+    SetResizeLimits(PageF,
+        math.max(MIN_WIDTH, (EmoteMenu.ButtonW * MIN_COLUMNS) + EmoteMenu.VIEWPORT_INSET),
+        math.max(MIN_HEIGHT, CONTENT_TOP + (EmoteMenu.ButtonH * 4) + MARGIN_BOTTOM),
+        MAX_WIDTH, MAX_HEIGHT)
+end
+UpdateResizeLimits()
 PageF:RegisterForDrag("LeftButton")
 PageF:SetScript("OnDragStart", PageF.StartMoving)
 -- Record wherever the frame actually ended up. Both moving and resizing have
@@ -521,7 +568,7 @@ ScrollF:EnableMouseWheel(true)
 ScrollF:SetScript("OnMouseWheel", function(_, delta)
     if not ScrollBar:IsShown() then return end
     local _, maxScroll = ScrollBar:GetMinMaxValues()
-    local step = BUTTON_HEIGHT * 3
+    local step = EmoteMenu.ButtonH * 3
     local target = ScrollBar:GetValue() - (delta * step)
     ScrollBar:SetValue(math.max(0, math.min(target, maxScroll)))
 end)
@@ -1002,7 +1049,7 @@ end)
 -- How many columns fit, and how many rows that needs. Kept free of any frame
 -- lookups so the arithmetic can be exercised on its own.
 local function ComputeGrid(viewportWidth, count)
-    local columns = math.floor(viewportWidth / BUTTON_WIDTH)
+    local columns = math.floor(viewportWidth / EmoteMenu.ButtonW)
     if columns < 1 then columns = 1 end
     local rows = math.ceil(count / columns)
     return columns, rows
@@ -1017,6 +1064,7 @@ NoMatches:Hide()
 local buttons = {}      -- every emote button, in store order
 local visible = {}      -- the subset currently passing the filter
 local layoutColumns = 0
+local layoutRows = 0
 
 -- Match the typed text against the emote's name, its slash command and the
 -- text the server prints. Including the printed text is what lets "sorry" find
@@ -1052,30 +1100,53 @@ local function UpdateScrollRange()
     end
 end
 
--- Reposition the buttons for the current width. The column count is the only
--- thing that can change their positions, so a resize that does not cross a
--- column boundary skips the loop entirely -- OnSizeChanged fires continuously
--- while dragging the grip.
+-- Reposition the buttons for the current width. Only the shape of the grid can
+-- change their positions, so a resize that does not cross a column boundary
+-- skips the loop entirely -- OnSizeChanged fires continuously while the grip is
+-- being dragged.
 local function Reflow(force)
     if #buttons == 0 then return end
 
     local viewportWidth = ScrollF:GetWidth()
     local columns, rows = ComputeGrid(viewportWidth, #visible)
 
-    if force or columns ~= layoutColumns then
-        layoutColumns = columns
+    -- Down-column order depends on the row count as well, which changes with
+    -- the filter even when the width has not.
+    if force or columns ~= layoutColumns or rows ~= layoutRows then
+        layoutColumns, layoutRows = columns, rows
+        local down = EmoteMenu.SortOrder == "down"
         for i, button in ipairs(visible) do
-            local column = (i - 1) % columns
-            local row = math.floor((i - 1) / columns)
+            local column, row
+            if down then
+                column = math.floor((i - 1) / rows)
+                row = (i - 1) % rows
+            else
+                column = (i - 1) % columns
+                row = math.floor((i - 1) / columns)
+            end
             button:ClearAllPoints()
-            button:SetPoint("TOPLEFT", column * BUTTON_WIDTH, -row * BUTTON_HEIGHT)
+            button:SetPoint("TOPLEFT", column * EmoteMenu.ButtonW, -row * EmoteMenu.ButtonH)
         end
-        ScrollChild:SetSize(columns * BUTTON_WIDTH, math.max(1, rows * BUTTON_HEIGHT))
+        ScrollChild:SetSize(columns * EmoteMenu.ButtonW,
+            math.max(1, rows * EmoteMenu.ButtonH))
     end
 
     UpdateScrollRange()
 end
 EmoteMenu.Reflow = Reflow
+
+-- Push a new button size onto the buttons that already exist. Ones built later
+-- pick it up from EmoteMenu.ButtonW/H when they are created.
+local function ApplyButtonSize()
+    UpdateResizeLimits()
+    for _, button in ipairs(buttons) do
+        button:SetSize(EmoteMenu.ButtonW, EmoteMenu.ButtonH)
+    end
+    -- The column count can land on the same number at a new button width, and
+    -- every position is wrong regardless, so force the relayout.
+    Reflow(true)
+end
+EmoteMenu.ApplyButtonSize = ApplyButtonSize
 
 -- Rebuild the visible set. Buttons are never destroyed, only shown or hidden,
 -- so filtering costs one pass over the list and no frame churn.
@@ -1318,6 +1389,285 @@ EditToggle:SetScript("OnClick", function()
     ApplyFilter(SearchBox:GetText())
 end)
 
+----------------------------------------------------------------------
+-- Options
+----------------------------------------------------------------------
+-- A cog on the panel opens this. Hand-built for the same reason the tabs and
+-- the scrollbar are: Blizzard's slider and checkbox templates differ between
+-- Classic Era and the modern clients, and this addon ships to both.
+--
+-- Deliberately not a Blizzard interface-options category either. Those live
+-- behind two different APIs depending on the flavour, and a panel reached from
+-- inside the menu is where someone will look for it anyway.
+
+local OPT_PAD = 16
+local OPT_WIDTH = 330
+
+local Options = CreateFrame("Frame", "EmoteMenuOptionsFrame", UIParent)
+-- Above the panel (HIGH) and below the confirm modal (FULLSCREEN_DIALOG).
+Options:SetFrameStrata("DIALOG")
+Options:SetWidth(OPT_WIDTH)
+Options:SetHeight(300)
+Options:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+Options:EnableMouse(true)
+Options:SetMovable(true)
+Options:SetClampedToScreen(true)
+Options:RegisterForDrag("LeftButton")
+Options:SetScript("OnDragStart", Options.StartMoving)
+Options:SetScript("OnDragStop", Options.StopMovingOrSizing)
+Options:Hide()
+EmoteMenu.Options = Options
+
+-- Escape closes this even when it has been turned off for the panel: that
+-- setting is about keeping the emote list on screen, while a dialog that
+-- swallows Escape is just broken. CloseSpecialWindows hides the last shown
+-- entry first, so this one goes after the panel and closes before it.
+table.insert(UISpecialFrames, "EmoteMenuOptionsFrame")
+
+Options.bg = Options:CreateTexture(nil, "BACKGROUND")
+Options.bg:SetAllPoints()
+Options.bg:SetColorTexture(0.04, 0.04, 0.04, 0.97)
+
+Options.title = Options:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+Options.title:SetPoint("TOPLEFT", OPT_PAD, -14)
+Options.title:SetText("Emote Menu options")
+
+local OptClose = CreateFrame("Button", nil, Options, "UIPanelCloseButton")
+OptClose:SetSize(28, 28)
+OptClose:SetPoint("TOPRIGHT", 0, 0)
+OptClose:SetScript("OnClick", function() Options:Hide() end)
+
+-- Rows are stacked against a running cursor rather than anchored to each
+-- other, so reordering them later is a matter of moving the lines.
+local optY = -46
+
+local function Place(frame, indent, height, gap, stretch)
+    frame:SetPoint("TOPLEFT", Options, "TOPLEFT", OPT_PAD + indent, optY)
+    if stretch then
+        frame:SetPoint("TOPRIGHT", Options, "TOPRIGHT", -OPT_PAD, optY)
+    end
+    frame:SetHeight(height)
+    optY = optY - height - (gap or 8)
+end
+
+local function AddHeading(text)
+    local fs = Options:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    fs:SetPoint("TOPLEFT", Options, "TOPLEFT", OPT_PAD, optY)
+    fs:SetTextColor(0.98, 0.82, 0.25)
+    fs:SetText(text)
+    optY = optY - 18
+    return fs
+end
+
+local function AddTip(frame, title, body)
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(title)
+        if body then GameTooltip:AddLine(body, 0.8, 0.8, 0.8, true) end
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", GameTooltip_Hide)
+end
+
+-- A tickable row. Used for both the on/off settings and the sort choice: the
+-- sort options are one-of-two rather than independent, but giving them their
+-- own art for the sake of it would be two shapes to draw and no clearer.
+local function MakeCheck(text, tip, onClick)
+    local c = CreateFrame("Button", nil, Options)
+    c.box = c:CreateTexture(nil, "BACKGROUND")
+    c.box:SetSize(13, 13)
+    c.box:SetPoint("LEFT", 0, 0)
+    c.box:SetColorTexture(1, 1, 1, 0.14)
+
+    c.tick = c:CreateTexture(nil, "ARTWORK")
+    c.tick:SetSize(7, 7)
+    c.tick:SetPoint("CENTER", c.box, "CENTER")
+    c.tick:SetColorTexture(0.98, 0.82, 0.25, 1)
+    c.tick:Hide()
+
+    c.label = c:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    c.label:SetPoint("LEFT", c.box, "RIGHT", 6, 0)
+    c.label:SetText(text)
+    c:SetWidth(13 + 6 + c.label:GetStringWidth() + 4)
+    c:SetScript("OnClick", onClick)
+    AddTip(c, text, tip)
+    return c
+end
+
+-- Label on the left, live value on the right, track underneath.
+local function MakeSlider(text, tip, minValue, maxValue, apply)
+    local row = CreateFrame("Frame", nil, Options)
+
+    row.label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.label:SetPoint("TOPLEFT", 0, 0)
+    row.label:SetText(text)
+
+    row.value = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    row.value:SetPoint("TOPRIGHT", 0, 0)
+
+    local slider = CreateFrame("Slider", nil, row)
+    slider:SetOrientation("HORIZONTAL")
+    slider:SetHeight(16)
+    slider:SetPoint("BOTTOMLEFT", 0, 0)
+    slider:SetPoint("BOTTOMRIGHT", 0, 0)
+    slider:SetMinMaxValues(minValue, maxValue)
+    slider:SetValueStep(1)
+    slider:SetObeyStepOnDrag(true)
+
+    slider.track = slider:CreateTexture(nil, "BACKGROUND")
+    slider.track:SetPoint("LEFT")
+    slider.track:SetPoint("RIGHT")
+    slider.track:SetHeight(4)
+    slider.track:SetColorTexture(1, 1, 1, 0.10)
+
+    slider.thumb = slider:CreateTexture(nil, "ARTWORK")
+    slider.thumb:SetSize(10, 16)
+    slider.thumb:SetColorTexture(0.98, 0.82, 0.25, 1)
+    slider:SetThumbTexture(slider.thumb)
+
+    -- Rounded on the way in: the widget reports fractions mid-drag, and a
+    -- button one and a half pixels wider is not a thing worth allowing.
+    slider:SetScript("OnValueChanged", function(_, value)
+        value = math.floor(value + 0.5)
+        row.value:SetText(tostring(value))
+        apply(value)
+    end)
+    AddTip(slider, text, tip)
+
+    row.slider = slider
+    return row
+end
+
+AddHeading("Order")
+local SortAcross = MakeCheck("A to Z across the rows", nil, function()
+    EmoteMenu.SortOrder = "across"
+    EmoteMenu:RefreshOptions()
+    Reflow(true)
+end)
+local SortDown = MakeCheck("A to Z down the columns", nil, function()
+    EmoteMenu.SortOrder = "down"
+    EmoteMenu:RefreshOptions()
+    Reflow(true)
+end)
+Place(SortAcross, 8, 16, 4)
+Place(SortDown, 8, 16, 12)
+
+AddHeading("Button size")
+local WidthSlider = MakeSlider("Width", "How wide each emote button is. Wider "
+    .. "buttons mean fewer columns in the same panel.",
+    MIN_BUTTON_W, MAX_BUTTON_W, function(value)
+        if EmoteMenu.ButtonW == value then return end
+        EmoteMenu.ButtonW = value
+        ApplyButtonSize()
+    end)
+local HeightSlider = MakeSlider("Height", "How tall each emote button is.",
+    MIN_BUTTON_H, MAX_BUTTON_H, function(value)
+        if EmoteMenu.ButtonH == value then return end
+        EmoteMenu.ButtonH = value
+        ApplyButtonSize()
+    end)
+Place(WidthSlider, 0, 32, 10, true)
+Place(HeightSlider, 0, 32, 14, true)
+
+AddHeading("Behaviour")
+local EscapeCheck = MakeCheck("Escape closes the menu",
+    "Turn this off to keep the menu on screen when you press Escape.",
+    function()
+        EmoteMenu.EscapeCloses = (EmoteMenu.EscapeCloses == "On") and "Off" or "On"
+        SetEscapeCloses(EmoteMenu.EscapeCloses == "On")
+        EmoteMenu:RefreshOptions()
+    end)
+local MinimapCheck = MakeCheck("Show the minimap icon",
+    "With this off, reach the menu with /emotemenu or /emm.",
+    function()
+        EmoteMenu.ShowMinimapIcon = (EmoteMenu.ShowMinimapIcon == "On")
+            and "Off" or "On"
+        if EmoteMenu.SetMinimapIconShown then
+            EmoteMenu:SetMinimapIconShown()
+        end
+        EmoteMenu:RefreshOptions()
+    end)
+Place(EscapeCheck, 8, 16, 4)
+Place(MinimapCheck, 8, 16, 14)
+
+-- Everything the options panel and the mouse between them can leave in a state
+-- worth backing out of: size, position, appearance. Not the tabs -- those are
+-- work someone did by hand, and wiping them from a button labelled "reset"
+-- would be a nasty surprise.
+local function ResetToDefaults()
+    EmoteMenu.ButtonW, EmoteMenu.ButtonH = BUTTON_WIDTH, BUTTON_HEIGHT
+    EmoteMenu.SortOrder = "across"
+    EmoteMenu.EscapeCloses = "On"
+    EmoteMenu.ShowMinimapIcon = "On"
+    EmoteMenu.PanelW, EmoteMenu.PanelH = DEFAULT_WIDTH, DEFAULT_HEIGHT
+    EmoteMenu.MainPanelA, EmoteMenu.MainPanelR = "CENTER", "CENTER"
+    EmoteMenu.MainPanelX, EmoteMenu.MainPanelY = 0, 0
+
+    SetEscapeCloses(true)
+    if EmoteMenu.SetMinimapIconShown then EmoteMenu:SetMinimapIconShown() end
+    PageF:ClearAllPoints()
+    PageF:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    PageF:SetSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+    ApplyButtonSize()
+    EmoteMenu:RefreshOptions()
+end
+EmoteMenu.ResetToDefaults = ResetToDefaults
+
+local ResetButton = CreateFrame("Button", nil, Options, "UIPanelButtonTemplate")
+ResetButton:SetSize(140, 22)
+ResetButton:SetPoint("BOTTOMLEFT", OPT_PAD, 14)
+ResetButton:SetText("Reset to defaults")
+ResetButton:SetScript("OnClick", function()
+    ShowPrompt({
+        title = "Reset to defaults",
+        accept = "Reset",
+        body = "Put the panel size, position and appearance back the way they "
+            .. "shipped? Your tabs and favourites are not affected.",
+        onAccept = function() ResetToDefaults() end,
+    })
+end)
+
+local OptDone = CreateFrame("Button", nil, Options, "UIPanelButtonTemplate")
+OptDone:SetSize(100, 22)
+OptDone:SetPoint("BOTTOMRIGHT", -OPT_PAD, 14)
+OptDone:SetText("Close")
+OptDone:SetScript("OnClick", function() Options:Hide() end)
+
+-- The controls stack downwards from the title, so the frame is as tall as they
+-- turned out to be plus room for the buttons along the bottom.
+Options:SetHeight(-optY + 44)
+
+-- Every control reads its state from EmoteMenu rather than keeping its own, so
+-- one function puts the whole panel back in step -- after a click, after a
+-- reset, and whenever it is opened.
+function EmoteMenu:RefreshOptions()
+    SortAcross.tick:SetShown(self.SortOrder ~= "down")
+    SortDown.tick:SetShown(self.SortOrder == "down")
+    EscapeCheck.tick:SetShown(self.EscapeCloses == "On")
+    MinimapCheck.tick:SetShown(self.ShowMinimapIcon == "On")
+    WidthSlider.slider:SetValue(self.ButtonW)
+    HeightSlider.slider:SetValue(self.ButtonH)
+end
+
+Options:SetScript("OnShow", function() EmoteMenu:RefreshOptions() end)
+
+-- The cog itself. Left of the close button, and small: the title row is also
+-- the drag handle, so anything up there has to stay out of the way.
+local OptionsButton = CreateFrame("Button", nil, PageF)
+OptionsButton:SetSize(16, 16)
+OptionsButton:SetPoint("TOPRIGHT", -32, -8)
+OptionsButton:SetNormalTexture(TEXTURE_PATH .. "cog.tga")
+OptionsButton:SetHighlightTexture(TEXTURE_PATH .. "cog.tga")
+-- Dimmed until the mouse is on it, where the additive highlight brings it
+-- back up to full white.
+local cogTexture = OptionsButton:GetNormalTexture()
+if cogTexture then cogTexture:SetVertexColor(0.75, 0.75, 0.75, 1) end
+OptionsButton:SetScript("OnClick", function()
+    if Options:IsShown() then Options:Hide() else Options:Show() end
+end)
+AddTip(OptionsButton, "Options", "Sort order, button size and a few switches.")
+EmoteMenu.OptionsButton = OptionsButton
+
 SearchBox:SetScript("OnTextChanged", function(self) ApplyFilter(self:GetText()) end)
 SearchBox:SetScript("OnEditFocusGained", function(self) self.hint:Hide() end)
 SearchBox:SetScript("OnEditFocusLost", function(self)
@@ -1382,7 +1732,7 @@ local function BuildEmoteButtons()
         -- Positions are left to Reflow(), which depends on the current width.
         local eBtn = CreateFrame("Button", nil, ScrollChild, "UIPanelButtonTemplate")
         eBtn:SetNormalFontObject("GameFontNormalSmall")
-        eBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
+        eBtn:SetSize(EmoteMenu.ButtonW, EmoteMenu.ButtonH)
         eBtn:SetText(emoteString)
         eBtn.entry = entry
 
@@ -1462,6 +1812,7 @@ end)
 PageF:SetScript("OnHide", function()
     EditMode = false
     CloseContextMenu()
+    Options:Hide()
 end)
 
 PageF:SetScript("OnShow", function(self)
@@ -1531,7 +1882,7 @@ function EmoteMenu:CreateMiniMapIcon()
     local minimap = MigrateMinimapSettings()
     icon:Register("Emote_Menu", dataObject, minimap)
 
-    -- TODO: call this again from the options panel once there is one
+    -- The options panel calls this again whenever the setting is changed.
     self.SetMinimapIconShown = function(self)
         local hide = self.ShowMinimapIcon ~= "On"
         minimap.hide = hide
@@ -1579,6 +1930,13 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         -- Panel size
         EmoteMenu:LoadVarNum("PanelW", DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH)
         EmoteMenu:LoadVarNum("PanelH", DEFAULT_HEIGHT, MIN_HEIGHT, MAX_HEIGHT)
+        -- Appearance
+        EmoteMenu:LoadVarNum("ButtonW", BUTTON_WIDTH, MIN_BUTTON_W, MAX_BUTTON_W)
+        EmoteMenu:LoadVarNum("ButtonH", BUTTON_HEIGHT, MIN_BUTTON_H, MAX_BUTTON_H)
+        EmoteMenu:LoadVarSet("SortOrder", "across", VALID_SORTS)
+        EmoteMenu:LoadVarChk("EscapeCloses", "On")
+        SetEscapeCloses(EmoteMenu.EscapeCloses == "On")
+        UpdateResizeLimits()
         -- Falls back to All if the stored tab has since been deleted.
         local wanted = EmoteMenuDB.DefaultTab
         EmoteMenu.DefaultTab = (type(wanted) == "string" and TabById(wanted))
@@ -1599,6 +1957,10 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         EmoteMenuDB.MainPanelY = EmoteMenu.MainPanelY
         EmoteMenuDB.PanelW = EmoteMenu.PanelW
         EmoteMenuDB.PanelH = EmoteMenu.PanelH
+        EmoteMenuDB.ButtonW = EmoteMenu.ButtonW
+        EmoteMenuDB.ButtonH = EmoteMenu.ButtonH
+        EmoteMenuDB.SortOrder = EmoteMenu.SortOrder
+        EmoteMenuDB.EscapeCloses = EmoteMenu.EscapeCloses
         EmoteMenuDB.DefaultTab = EmoteMenu.DefaultTab
         EmoteMenuDB[SETTINGS_MARKER] = time and time() or 1
     end

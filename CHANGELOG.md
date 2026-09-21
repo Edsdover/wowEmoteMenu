@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.1.0
+
+### Added
+
+- **An options panel**, opened from the cog at the top right of the menu.
+  - **Order.** The list runs A to Z across the rows, or A to Z down the
+    columns.
+  - **Button size.** Two sliders, one for width and one for height. Wider
+    buttons mean fewer columns in the same panel, and the grid reflows as the
+    slider moves.
+  - **Escape closes the menu**, which can now be turned off by anyone who wants
+    to leave the menu parked on screen.
+  - **Show the minimap icon.** This setting has existed since the first release
+    with no way to reach it. There is now a tick box for it.
+  - **Reset to defaults**, which puts the panel size, position and appearance
+    back the way they shipped. Tabs and favourites are deliberately left alone.
+
+All of it is remembered between sessions, on clients that restore addon
+settings -- see the note about the Forever beta below.
+
+### Fixed
+
+- **Two copies of the addon no longer throw an error on login.** Renaming the
+  folder in 1.0.0 leaves the old one behind and WoW loads both. The second copy
+  now says so in chat and stands down, instead of handing a nil to LibDBIcon.
+
 ## 1.0.0
 
 First release since 2024, and a substantial one.

@@ -14,6 +14,7 @@ Supersampled 8x and downsampled, because these display at roughly 12 pixels and
 aliased edges turn to mush at that size. Shapes are deliberately chunky for the
 same reason: thin strokes disappear.
 """
+import math
 import os
 
 from PIL import Image, ImageDraw
@@ -72,6 +73,32 @@ def build_dancer():
     return img
 
 
+def build_cog():
+    """A gear for the options button: teeth from an alternating-radius polygon,
+    then a hole punched through the middle so it reads as a cog and not a star.
+    """
+    img, d = new_canvas()
+    cx = cy = 32.0
+    teeth = 8
+    r_out, r_in, r_hole = 30.0, 21.0, 9.5
+    pts = []
+    step = 2 * math.pi / teeth
+    for k in range(teeth):
+        # One tooth per turn of the loop, centred on its own slice so the gear
+        # comes out symmetric about the vertical axis with a tooth pointing up.
+        mid = -math.pi / 2 + k * step
+        for frac, r in ((-0.38, r_in), (-0.17, r_out),
+                        (0.17, r_out), (0.38, r_in)):
+            a = mid + frac * step
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    d.polygon([s(*p) for p in pts], fill=WHITE)
+    # Drawn rather than composited: ImageDraw writes the alpha straight in, so
+    # a fully transparent fill cuts a hole instead of blending onto the tooth.
+    d.ellipse([s(cx - r_hole, cy - r_hole), s(cx + r_hole, cy + r_hole)],
+              fill=(255, 255, 255, 0))
+    return img
+
+
 def save(img, name):
     os.makedirs(OUT, exist_ok=True)
     small = img.resize((SIZE, SIZE), Image.LANCZOS)
@@ -95,7 +122,8 @@ def preview(img, name):
 
 
 def main():
-    for builder, name in ((build_speaker, "sound.tga"), (build_dancer, "animation.tga")):
+    for builder, name in ((build_speaker, "sound.tga"), (build_dancer, "animation.tga"),
+                      (build_cog, "cog.tga")):
         img = save(builder(), name)
         preview(img, name)
 

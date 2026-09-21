@@ -38,6 +38,12 @@ an animation (the dancer). Every emote was checked in game one at a time.
 **Drag the bottom-right corner** to resize. The columns reflow to fit and a
 scrollbar appears only when it is needed.
 
+**The cog** at the top right opens the options: whether the list runs A to Z
+across the rows or down the columns, how wide and how tall the buttons are,
+whether Escape closes the menu, and whether the minimap icon is shown. There is
+a **Reset to defaults** there too, which puts the size, position and appearance
+back the way they shipped without touching your tabs.
+
 
 ### Tabs
 
@@ -79,10 +85,9 @@ addon can do about it. Tracked at
 
 ### TODO
 
-1. Options menu
-2. Sorting, and filters for animated / voiced emotes
-3. Rename a tab after creating it
-4. Check `/mountspecial` once a mount is available -- it needs one to do
+1. Filters for animated / voiced emotes
+2. Rename a tab after creating it
+3. Check `/mountspecial` once a mount is available -- it needs one to do
    anything, so it is currently marked as having no animation
 
 

@@ -223,6 +223,11 @@ end
 function frameMeta:SetMinMaxValues(lo, hi) self.minVal, self.maxVal = lo, hi end
 function frameMeta:GetMinMaxValues() return self.minVal or 0, self.maxVal or 0 end
 function frameMeta:SetValue(v)
+    -- The real widget refuses values outside the range it was given,
+    -- which is what stops a saved setting from arriving out of bounds.
+    if self.minVal and self.maxVal and self.maxVal > self.minVal then
+        v = math.max(self.minVal, math.min(self.maxVal, v))
+    end
     self.value = v
     if self.scripts.OnValueChanged then self.scripts.OnValueChanged(self, v) end
 end

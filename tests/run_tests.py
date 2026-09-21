@@ -883,6 +883,270 @@ check("an unknown stored default is rejected",
       L10.eval('__core.EmoteMenu.DefaultTab') == "all",
       L10.eval('__core.EmoteMenu.DefaultTab'))
 
+print("\n== 2g. the options panel ==")
+# A runtime of its own: these tests change the button size and the sort order,
+# and the sections after this one assume the shipped layout.
+L11 = new_runtime("nil")
+L11.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+L11.execute("SlashCmdList['EMOTE_MENU']('')")
+EM11 = L11.eval("__core.EmoteMenu")
+
+check("options frame exists", L11.globals()["EmoteMenuOptionsFrame"] is not None)
+check("it starts hidden", L11.eval("EmoteMenuOptionsFrame:IsShown()") is not True)
+check("a cog sits on the panel",
+      L11.eval("__core.EmoteMenu.OptionsButton.parent == EmoteMenuFrame") is True)
+
+cog = EM11.OptionsButton
+cog.Click(cog)
+check("the cog opens the options", L11.eval("EmoteMenuOptionsFrame:IsShown()") is True)
+cog.Click(cog)
+check("and closes them again", L11.eval("EmoteMenuOptionsFrame:IsShown()") is False)
+cog.Click(cog)
+
+L11.execute("EmoteMenuFrame:Hide()")
+check("closing the menu takes the options with it",
+      L11.eval("EmoteMenuOptionsFrame:IsShown()") is False)
+L11.execute("SlashCmdList['EMOTE_MENU']('')")
+cog.Click(cog)
+
+
+def special11():
+    return list(L11.eval("UISpecialFrames").values())
+
+
+check("options are on the escape list after the panel, so escape closes them first",
+      special11().index("EmoteMenuOptionsFrame") > special11().index("EmoteMenuFrame"))
+
+
+def opt_row(label):
+    """A control in the options panel, found by its visible label."""
+    return L11.eval('''(function()
+        for _, f in ipairs(__frames) do
+            if f.parent == EmoteMenuOptionsFrame and f.label
+               and f.label.text == "%s" then return f end
+        end
+    end)()''' % label)
+
+
+def click_text(L, text):
+    """Click the button carrying this exact label. Used for the ones built from
+    a Blizzard template, which keep their text rather than a label region."""
+    b = L.eval('''(function()
+        for _, f in ipairs(__frames) do
+            if f.text == "%s" and f.scripts and f.scripts.OnClick then return f end
+        end
+    end)()''' % text)
+    assert b is not None, f"no button labelled {text}"
+    b.Click(b)
+
+
+def first_points(n=3):
+    """TOPLEFT of the first n emote buttons, in store order."""
+    return L11.eval('''(function()
+        local out, seen = {}, 0
+        for _, f in ipairs(__frames) do
+            if f.entry ~= nil and f.points.TOPLEFT then
+                seen = seen + 1
+                if seen <= %d then
+                    out[seen] = { f.points.TOPLEFT.x, f.points.TOPLEFT.y }
+                end
+            end
+        end
+        return out
+    end)()''' % n)
+
+
+def columns11():
+    return L11.eval("""(function()
+        local xs, n = {}, 0
+        for _, f in ipairs(__frames) do
+            if f.entry ~= nil and f.points and f.points.TOPLEFT then
+                local x = f.points.TOPLEFT.x
+                if xs[x] == nil then xs[x] = true; n = n + 1 end
+            end
+        end
+        return n
+    end)()""")
+
+
+for row in ("A to Z across the rows", "A to Z down the columns",
+            "Width", "Height", "Escape closes the menu", "Show the minimap icon"):
+    check(f"control present: {row}", opt_row(row) is not None)
+
+BH = EM11.ButtonH
+pts = first_points()
+check("A to Z runs across the rows by default",
+      pts[1][1] == 0 and pts[2][1] == EM11.ButtonW and pts[2][2] == 0,
+      f"{pts[1][1]},{pts[1][2]} then {pts[2][1]},{pts[2][2]}")
+
+down = opt_row("A to Z down the columns")
+down.Click(down)
+pts = first_points()
+check("A to Z down stacks them in one column",
+      pts[1][1] == 0 and pts[2][1] == 0 and pts[2][2] == -BH and pts[3][2] == -2 * BH,
+      f"{pts[2][1]},{pts[2][2]}")
+check("the sort tick follows the setting",
+      L11.eval('''(function()
+          for _, f in ipairs(__frames) do
+              if f.parent == EmoteMenuOptionsFrame and f.label
+                 and f.label.text == "A to Z down the columns" then
+                  return f.tick.shown
+              end
+          end
+      end)()''') is True)
+check("down the columns still places every button", columns11() == 10, columns11())
+
+across = opt_row("A to Z across the rows")
+across.Click(across)
+pts = first_points()
+check("switching back restores the across layout",
+      pts[2][1] == EM11.ButtonW and pts[2][2] == 0)
+
+# Button size.
+width = opt_row("Width")
+width.slider.SetValue(width.slider, 140)
+check("the width slider resizes the buttons", EM11.ButtonW == 140, EM11.ButtonW)
+check("the grid follows the new width", columns11() == 7, columns11())
+check("ComputeGrid reads the live width",
+      EM11.ComputeGrid(1400, 100)[0] == 10, EM11.ComputeGrid(1400, 100))
+check("the resize floor follows the button size", L11.eval(
+    "EmoteMenuFrame.resizeBounds[1] >= 140 * 3"),
+    L11.eval("EmoteMenuFrame.resizeBounds[1]"))
+check("the buttons themselves are wider", L11.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil then return f.w end
+    end
+end)()""") == 140)
+
+height = opt_row("Height")
+height.slider.SetValue(height.slider, 26)
+check("the height slider resizes the buttons", EM11.ButtonH == 26, EM11.ButtonH)
+check("rows are spaced by the new height", first_points(2)[2][2] == 0
+      and L11.eval("""(function()
+          for _, f in ipairs(__frames) do
+              if f.entry ~= nil then return f.h end
+          end
+      end)()""") == 26)
+
+# Clamped at both ends: a slider cannot be dragged out of range, but a saved
+# variable can arrive out of range and the two share the same limits.
+width.slider.SetValue(width.slider, 1000)
+check("the width slider stops at its maximum", EM11.ButtonW <= 180, EM11.ButtonW)
+width.slider.SetValue(width.slider, 1)
+check("and at its minimum", EM11.ButtonW >= 70, EM11.ButtonW)
+
+# Escape.
+escape = opt_row("Escape closes the menu")
+escape.Click(escape)
+check("turning escape off unregisters the panel",
+      "EmoteMenuFrame" not in special11())
+check("and records it", EM11.EscapeCloses == "Off", EM11.EscapeCloses)
+check("the options dialog still closes on escape",
+      "EmoteMenuOptionsFrame" in special11())
+escape.Click(escape)
+check("turning it back on re-registers the panel", "EmoteMenuFrame" in special11())
+escape.Click(escape)
+escape.Click(escape)
+check("toggling repeatedly does not register it twice",
+      special11().count("EmoteMenuFrame") == 1,
+      f"{special11().count('EmoteMenuFrame')} entries")
+
+# Minimap icon -- the setting that had no UI at all until now.
+hidden_before = L11.eval("#__dbicon.hidden")
+minimap = opt_row("Show the minimap icon")
+minimap.Click(minimap)
+check("unticking the minimap option hides the icon",
+      L11.eval("#__dbicon.hidden") == hidden_before + 1 and EM11.ShowMinimapIcon == "Off",
+      EM11.ShowMinimapIcon)
+check("and the library is told to keep it hidden",
+      L11.eval("EmoteMenuDB.minimap.hide") is True)
+minimap.Click(minimap)
+check("ticking it brings the icon back",
+      EM11.ShowMinimapIcon == "On" and L11.eval("EmoteMenuDB.minimap.hide") is False)
+
+# Reset.
+L11.execute('__core.EmoteMenu.MainPanelX = 400')
+click_text(L11, "Reset to defaults")
+check("reset asks first", L11.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.title and f.title.text == "Reset to defaults" then return f.shown end
+    end
+end)()""") is True)
+click_text(L11, "Reset")
+check("reset restores the button size",
+      EM11.ButtonW == EM11.BUTTON_WIDTH and EM11.ButtonH == BH,
+      f"{EM11.ButtonW}x{EM11.ButtonH}")
+check("reset restores the sort order", EM11.SortOrder == "across")
+check("reset restores the panel size",
+      EM11.PanelW == DEFAULT_W and EM11.PanelH == DEFAULT_H)
+check("reset recentres the panel", EM11.MainPanelX == 0 and EM11.MainPanelA == "CENTER")
+check("reset leaves escape on", EM11.EscapeCloses == "On"
+      and "EmoteMenuFrame" in special11())
+check("reset relays out the grid", columns11() == 10, columns11())
+check("reset does not touch the tabs",
+      L11.eval('__core.EmoteMenu:TabCount("pvp")') > 0)
+
+L11.execute("""
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("PLAYER_LOGOUT") then f:Fire("PLAYER_LOGOUT") end
+end
+""")
+check("the options are written to the DB",
+      L11.eval("EmoteMenuDB.SortOrder") == "across"
+      and L11.eval("EmoteMenuDB.EscapeCloses") == "On"
+      and L11.eval("EmoteMenuDB.ButtonW") == EM11.BUTTON_WIDTH,
+      f'{L11.eval("EmoteMenuDB.SortOrder")} {L11.eval("EmoteMenuDB.ButtonW")}')
+
+print("\n== 2h. saved options come back ==")
+L12 = new_runtime('''{
+    ButtonW = 130, ButtonH = 24, SortOrder = "down", EscapeCloses = "Off",
+    ShowMinimapIcon = "On", settingsWritten = 1,
+}''')
+L12.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+EM12 = L12.eval("__core.EmoteMenu")
+check("saved button size restored", EM12.ButtonW == 130 and EM12.ButtonH == 24,
+      f"{EM12.ButtonW}x{EM12.ButtonH}")
+check("saved sort order restored", EM12.SortOrder == "down")
+check("escape stays off across a reload",
+      "EmoteMenuFrame" not in list(L12.eval("UISpecialFrames").values()))
+L12.execute("SlashCmdList['EMOTE_MENU']('')")
+check("buttons are built at the saved size", L12.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil then return f.w == 130 and f.h == 24 end
+    end
+end)()""") is True)
+check("and laid out down the columns", L12.eval("""(function()
+    local seen = 0
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil and f.points.TOPLEFT then
+            seen = seen + 1
+            if seen == 2 then return f.points.TOPLEFT.x == 0 end
+        end
+    end
+end)()""") is True)
+
+L13 = new_runtime('''{
+    ButtonW = 5000, ButtonH = "tall", SortOrder = "sideways", EscapeCloses = "Maybe",
+}''')
+L13.execute(f'''
+for _, f in ipairs(__frames) do
+    if f:IsEventRegistered("ADDON_LOADED") then f:Fire("ADDON_LOADED", "{ADDON_FOLDER}") end
+end
+''')
+EM13 = L13.eval("__core.EmoteMenu")
+check("an absurd button width is rejected", EM13.ButtonW == EM13.BUTTON_WIDTH, EM13.ButtonW)
+check("a non-numeric button height is rejected", EM13.ButtonH == BH, EM13.ButtonH)
+check("an unknown sort order is rejected", EM13.SortOrder == "across", EM13.SortOrder)
+check("a bad escape setting is rejected", EM13.EscapeCloses == "On", EM13.EscapeCloses)
+
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""
 local f = EmoteMenuFrame
