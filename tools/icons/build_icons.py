@@ -99,6 +99,33 @@ def build_cog():
     return img
 
 
+def build_pencil():
+    """A pencil for the rename field: a body along a diagonal, a sharpened
+    point at the end of it, and two notches cut back out so the point and the
+    ferrule read as separate parts rather than one long wedge.
+    """
+    img, d = new_canvas()
+    bx, by = 52.0, 8.0          # the blunt end, top right
+    length, half = 56.0, 6.5
+    ax, ay = -0.7071, 0.7071    # down and to the left
+    px, py = 0.7071, 0.7071     # across the body
+
+    def at(along, across):
+        return (bx + ax * along + px * across, by + ay * along + py * across)
+
+    point_starts = length - 14
+    d.polygon([s(*at(0, half)), s(*at(0, -half)),
+               s(*at(point_starts, -half)), s(*at(length, 0)),
+               s(*at(point_starts, half))], fill=WHITE)
+
+    # Cut across the body twice. ImageDraw writes alpha straight in, so a
+    # transparent line removes rather than blends.
+    for along, width in ((point_starts, 3), (11, 3)):
+        d.line([s(*at(along, half + 1)), s(*at(along, -half - 1))],
+               fill=(255, 255, 255, 0), width=width * SS)
+    return img
+
+
 def save(img, name):
     os.makedirs(OUT, exist_ok=True)
     small = img.resize((SIZE, SIZE), Image.LANCZOS)
@@ -123,7 +150,8 @@ def preview(img, name):
 
 def main():
     for builder, name in ((build_speaker, "sound.tga"), (build_dancer, "animation.tga"),
-                      (build_cog, "cog.tga")):
+                      (build_cog, "cog.tga"),
+                      (build_pencil, "pencil.tga")):
         img = save(builder(), name)
         preview(img, name)
 

@@ -1270,6 +1270,14 @@ ET = toggle14()
 ET.Click(ET)
 check("edit mode puts a rename field on the tab", box_shown() is True)
 check("it is filled with the current name", BOX.text == "PvP", BOX.text)
+check("it carries a pencil to say it can be typed over",
+      BOX.pencil.texture.endswith("pencil.tga") and BOX.pencil.shown is True,
+      f"{BOX.pencil.texture} shown={BOX.pencil.shown}")
+check("the pencil is faint rather than solid", BOX.pencil.vertexColor[4] < 1,
+      BOX.pencil.vertexColor[4])
+BOX.SetFocus(BOX)
+check("it gets out of the way once the field is clicked",
+      BOX.pencil.shown is False)
 check("the tab's own label is hidden underneath",
       tab_field("pvp", "label").shown is False)
 check("the tab widens to hold the field", tab_field("pvp", "w") >= 110,
@@ -1288,6 +1296,8 @@ check("the id is untouched, so the contents came along",
       members_after == members_before, f"{members_after} vs {members_before}")
 check("a renamed shipped tab is recorded in the DB",
       L14.eval("EmoteMenuDB.tabLabels.pvp") == "Battlegrounds")
+check("and the pencil comes back once the edit is committed",
+      BOX.pencil.shown is True)
 
 # Escape abandons the edit.
 BOX.SetText(BOX, "Nonsense")

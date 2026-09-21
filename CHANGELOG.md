@@ -18,7 +18,7 @@
   - **Reset to defaults**, which puts the panel size, position and appearance
     back the way they shipped. Tabs and favourites are deliberately left alone.
 - **Tabs can be renamed.** Press `Edit` and the tab's own name becomes a
-  highlighted field; type a new one and press Enter. `PvP` and `Raid` can be
+  highlighted field with a pencil on it; type a new one and press Enter. `PvP` and `Raid` can be
   renamed as well as your own tabs, and a renamed tab keeps everything in it --
   names and contents were always stored separately, which is what makes this
   safe.

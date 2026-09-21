@@ -6,6 +6,11 @@ core.EmoteMenu = EmoteMenu
 local GetAddOnMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
 local addonVersion = GetAddOnMetadata and GetAddOnMetadata(addonName, "Version") or "unknown"
 
+-- Derived from addonName rather than hardcoded, for the same reason the
+-- ADDON_LOADED check is: the folder gets renamed by CurseForge installs and by
+-- anyone stripping the "-main" suffix.
+local TEXTURE_PATH = "Interface\\AddOns\\" .. addonName .. "\\Textures\\"
+
 -- Valid values for the saved-variable validators below. Using lookup tables
 -- keeps the checks from turning into long and/or chains where operator
 -- precedence quietly skips the type check.
@@ -810,7 +815,8 @@ RenameBox:SetAutoFocus(false)
 RenameBox:SetMaxLetters(MAX_TAB_LABEL)
 RenameBox:SetFontObject("GameFontHighlightSmall")
 RenameBox:SetJustifyH("CENTER")
-RenameBox:SetTextInsets(4, 4, 0, 0)
+-- Room on the right for the pencil, so a long name cannot run under it.
+RenameBox:SetTextInsets(4, 15, 0, 0)
 RenameBox:Hide()
 
 -- A gold wash rather than the flat grey the other fields use: this one has to
@@ -841,9 +847,22 @@ RenameBox.edges[4]:SetPoint("TOPRIGHT")
 RenameBox.edges[4]:SetPoint("BOTTOMRIGHT")
 RenameBox.edges[4]:SetWidth(1)
 
+-- The gold wash alone is easy to read past, so the field carries a pencil as
+-- well. Faint on purpose: it has one job, which is to say that the name can be
+-- typed over, and that job is done the moment someone clicks. It leaves at that
+-- point rather than sitting there for the cursor to run into.
+RenameBox.pencil = RenameBox:CreateTexture(nil, "OVERLAY")
+RenameBox.pencil:SetTexture(TEXTURE_PATH .. "pencil.tga")
+RenameBox.pencil:SetVertexColor(0.98, 0.82, 0.25, 0.55)
+RenameBox.pencil:SetSize(11, 11)
+RenameBox.pencil:SetPoint("RIGHT", -3, 0)
+
 -- Selecting the lot on focus means the common case -- replacing the name
 -- outright -- is one click and then typing.
-RenameBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+RenameBox:SetScript("OnEditFocusGained", function(self)
+    self:HighlightText()
+    self.pencil:Hide()
+end)
 RenameBox:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
     GameTooltip:SetText("Rename this tab")
@@ -951,6 +970,7 @@ local function RefreshTabs()
             RenameBox:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
             -- Never while it is being typed in: a rename in progress outranks
             -- whatever redraw brought us here.
+            RenameBox.pencil:SetShown(not RenameBox:HasFocus())
             if not RenameBox:HasFocus() then
                 local tab = TabById(ActiveTab)
                 RenameBox:SetText(tab and tab.label or "")
@@ -1129,11 +1149,6 @@ local MARKER_ANIM  = { 0.35, 0.78, 0.98 }   -- cool blue
 -- always read, whatever the size.
 local MARKER_STYLE = "icons"
 EmoteMenu.MARKER_STYLE = MARKER_STYLE
-
--- Derived from addonName rather than hardcoded, for the same reason the
--- ADDON_LOADED check is: the folder gets renamed by CurseForge installs and by
--- anyone stripping the "-main" suffix.
-local TEXTURE_PATH = "Interface\\AddOns\\" .. addonName .. "\\Textures\\"
 
 local function AddBar(button, colour, x, y, w, h)
     local t = button:CreateTexture(nil, "OVERLAY")

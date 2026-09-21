@@ -254,7 +254,10 @@ function frameMeta:EnterPressed()
 end
 function frameMeta:SetAutoFocus(v) self.autoFocus = v end
 function frameMeta:HasFocus() return self.focused == true end
-function frameMeta:SetFocus() self.focused = true end
+function frameMeta:SetFocus()
+    self.focused = true
+    if self.scripts.OnEditFocusGained then self.scripts.OnEditFocusGained(self) end
+end
 function frameMeta:ClearFocus()
     self.focused = false
     if self.scripts.OnEditFocusLost then self.scripts.OnEditFocusLost(self) end
