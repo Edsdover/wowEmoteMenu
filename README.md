@@ -1,5 +1,20 @@
 ## Emote Menu
 
+<!-- UPGRADE NOTICE: remove this once most people have moved to 1.0.0 or later.
+     Everyone updating from 0.1.0 has the old folder still sitting there. -->
+
+> ### ⚠️ Updating from an older version? Delete the old folder.
+>
+> The addon folder is now **`EmoteMenu`**. It used to be
+> **`wowEmoteMenu-main`**, and WoW will not remove the old one for you.
+>
+> Delete `Interface/AddOns/wowEmoteMenu-main` after updating. Leaving it means
+> two copies of the addon installed, both answering `/emotemenu` and both
+> putting an icon on your minimap.
+>
+> Your panel position and minimap icon position reset once as part of this. That
+> is the whole cost, and it only happens this once.
+
 ### This simple addon creates a menu that lists all possible emotes in the game. A tooltip tells you what the emote text will be and a simple click will perform that emote.
 
 ### You can access the emote menu by clicking the minimap icon or by typing `/emotemenu` (short form: `/emm`)
