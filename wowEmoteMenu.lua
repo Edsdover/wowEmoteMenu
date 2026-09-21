@@ -108,9 +108,12 @@ local DEFAULT_COLUMNS = 10
 -- squeezing the longest labels ('congratulate').
 local BUTTON_WIDTH = 100
 local BUTTON_HEIGHT = 18
-local MARKER_SIZE = 8
+-- 11px is a compromise: large enough for the speaker cone to survive
+-- downsampling, small enough that two of them plus the longest label
+-- ('congratulate') still fit across a button.
+local MARKER_SIZE = 11
 local MARKER_GAP = 2
-local MARKER_AREA = (MARKER_SIZE * 2) + MARKER_GAP + 4
+local MARKER_AREA = (MARKER_SIZE * 2) + MARKER_GAP + 5
 
 local MARGIN_LEFT = 10          -- gap between the panel edge and the grid
 local MARGIN_BOTTOM = 10
@@ -388,6 +391,18 @@ end
 local MARKER_SOUND = { 0.98, 0.82, 0.25 }   -- warm gold
 local MARKER_ANIM  = { 0.35, 0.78, 0.98 }   -- cool blue
 
+-- "icons" uses the speaker and dancer art in Textures/, "bars" falls back to
+-- shapes drawn from plain rectangles. Both exist because a texture file is the
+-- clearer picture but only if it survives being twelve pixels across; the bars
+-- always read, whatever the size.
+local MARKER_STYLE = "icons"
+EmoteMenu.MARKER_STYLE = MARKER_STYLE
+
+-- Derived from addonName rather than hardcoded, for the same reason the
+-- ADDON_LOADED check is: the folder gets renamed by CurseForge installs and by
+-- anyone stripping the "-main" suffix.
+local TEXTURE_PATH = "Interface\\AddOns\\" .. addonName .. "\\Textures\\"
+
 local function AddBar(button, colour, x, y, w, h)
     local t = button:CreateTexture(nil, "OVERLAY")
     t:SetColorTexture(colour[1], colour[2], colour[3], 0.95)
@@ -396,8 +411,29 @@ local function AddBar(button, colour, x, y, w, h)
     return t
 end
 
+local function AddIcon(button, colour, file, right)
+    local t = button:CreateTexture(nil, "OVERLAY")
+    t:SetTexture(TEXTURE_PATH .. file)
+    -- The art is white, so one file per shape covers both colours.
+    t:SetVertexColor(colour[1], colour[2], colour[3], 1)
+    t:SetSize(MARKER_SIZE, MARKER_SIZE)
+    t:SetPoint("RIGHT", right, 0)
+    return t
+end
+
 local function AddMarkers(button, entry)
     local right = -4
+    if MARKER_STYLE == "icons" then
+        if entry.voiced then
+            AddIcon(button, MARKER_SOUND, "sound.tga", right)
+            right = right - MARKER_SIZE - MARKER_GAP
+        end
+        if entry.animated then
+            AddIcon(button, MARKER_ANIM, "animation.tga", right)
+        end
+        return
+    end
+
     if entry.voiced then
         -- Ascending bars, bottom aligned, reading left to right.
         local base = right - MARKER_SIZE

@@ -135,6 +135,10 @@ function frameMeta:CreateTexture() return newRegion(self, "Texture") end
 function frameMeta:CreateFontString() return newRegion(self, "FontString") end
 -- Buttons made from a template own a label; the addon re-anchors it so the
 -- text cannot run under the markers, so it has to be a real region here.
+-- Record what a texture is pointed at so tests can check the marker art.
+function frameMeta:SetTexture(path) self.texture = path end
+function frameMeta:GetTexture() return self.texture end
+function frameMeta:SetVertexColor(r, g, b, a) self.vertexColor = { r, g, b, a } end
 function frameMeta:GetFontString()
     if not self.fontString then self.fontString = newRegion(self, "FontString") end
     return self.fontString
@@ -211,7 +215,7 @@ function frameMeta:MouseWheel(delta)
 end
 
 stubMethods(frameMeta, {
-    "SetAllPoints", "SetColorTexture", "SetTexture", "SetFrameStrata",
+    "SetAllPoints", "SetColorTexture", "SetFrameStrata",
     "SetFrameLevel", "SetClampedToScreen", "EnableMouse", "SetMovable",
     "RegisterForDrag", "RegisterForClicks", "StartMoving", "StopMovingOrSizing",
     "StartSizing", "SetUserPlaced", "SetNormalFontObject", "SetHighlightFontObject",

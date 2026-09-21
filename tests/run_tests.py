@@ -390,14 +390,34 @@ snd  = [t for t,(a,v) in store.items() if v and not a]
 none = [t for t,(a,v) in store.items() if not a and not v]
 print(f"  (store says: both={len(both)} anim={len(anim)} sound={len(snd)} neither={len(none)})")
 
-# Three bars per marker, so: 6 for both, 3 for one, 0 for neither.
-if both: check("emote with both gets 6 marker bars", marks(both[0]) == 6, f"{both[0]}={marks(both[0])}")
-if anim: check("animation only gets 3 bars", marks(anim[0]) == 3, f"{anim[0]}={marks(anim[0])}")
-if snd:  check("sound only gets 3 bars", marks(snd[0]) == 3, f"{snd[0]}={marks(snd[0])}")
+# An icon marker is one texture; a bar marker is three. Derive it rather than
+# hardcoding, so switching MARKER_STYLE does not fail the suite spuriously.
+PER = 1 if EM.MARKER_STYLE == "icons" else 3
+print(f"  (marker style: {EM.MARKER_STYLE}, {PER} texture(s) per marker)")
+if both: check(f"both gets {PER*2} textures", marks(both[0]) == PER*2, f"{both[0]}={marks(both[0])}")
+if anim: check(f"animation only gets {PER}", marks(anim[0]) == PER, f"{anim[0]}={marks(anim[0])}")
+if snd:  check(f"sound only gets {PER}", marks(snd[0]) == PER, f"{snd[0]}={marks(snd[0])}")
 if none: check("neither gets no markers", marks(none[0]) == 0, f"{none[0]}={marks(none[0])}")
 
-mismatch = [t for t,(a,v) in store.items() if marks(t) != (3 if a else 0) + (3 if v else 0)]
+mismatch = [t for t,(a,v) in store.items() if marks(t) != (PER if a else 0) + (PER if v else 0)]
 check("every button matches its flags", not mismatch, f"{len(mismatch)} wrong: {mismatch[:5]}")
+
+if EM.MARKER_STYLE == "icons":
+    paths = L.eval("""(function()
+        local t = {}
+        for _, f in ipairs(__frames) do
+            if f.frameType == "Texture" and f.texture then t[f.texture] = true end
+        end
+        local out = {}
+        for k in pairs(t) do out[#out+1] = k end
+        return table.concat(out, "|")
+    end)()""").split("|")
+    paths = [p for p in paths if p]
+    check("marker textures reference the addon folder", all(ADDON_FOLDER in p for p in paths), paths[:2])
+    import os as _os
+    files = [_os.path.join(ADDON, "Textures", _os.path.basename(p.replace(chr(92), "/"))) for p in paths]
+    check("marker texture files exist on disk", all(_os.path.isfile(f) for f in files),
+          [f for f in files if not _os.path.isfile(f)])
 
 # Markers must never overlap the label.
 check("label is inset away from the markers", L.eval("""(function()
