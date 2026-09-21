@@ -84,7 +84,13 @@ check("second alias is /emm", L.eval("SLASH_EMOTE_MENU2") == "/emm")
 
 # Buttons must not exist before first show
 before = L.eval("#__frames")
-check("buttons are lazy (few frames before show)", before < 30, f"frames={before}")
+emote_buttons = lambda: L.eval("""(function()
+    local n = 0
+    for _, f in ipairs(__frames) do if f.entry ~= nil then n = n + 1 end end
+    return n
+end)()""")
+check("no emote buttons built before first show", emote_buttons() == 0,
+      f"found {emote_buttons()}")
 
 # Fire ADDON_LOADED with the real folder name
 L.execute(f"""
@@ -128,7 +134,7 @@ __clickErrors = {}
 __tipErrors = {}
 __buttonCount = 0
 for _, f in ipairs(__frames) do
-    if f.template == "UIPanelButtonTemplate" and f.scripts.OnClick then
+    if f.entry ~= nil then
         __buttonCount = __buttonCount + 1
         local ok, err = pcall(f.Click, f)
         if not ok then table.insert(__clickErrors, tostring(err)) end
@@ -188,7 +194,7 @@ def grid_state():
     return L.eval("""(function()
         local xs, n = {}, 0
         for _, f in ipairs(__frames) do
-            if f.template == "UIPanelButtonTemplate" and f.points and f.points.TOPLEFT then
+            if f.entry ~= nil and f.points and f.points.TOPLEFT then
                 local x = f.points.TOPLEFT.x
                 if xs[x] == nil then xs[x] = true; n = n + 1 end
             end
@@ -244,7 +250,7 @@ check("scrollbar hides again when it fits", scrollbar_shown() is False,
 placed = L.eval("""(function()
     local n = 0
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" and f.points and f.points.TOPLEFT then
+        if f.entry ~= nil and f.points and f.points.TOPLEFT then
             n = n + 1
         end
     end
@@ -254,7 +260,7 @@ check(f"all {EMOTE_COUNT} buttons still positioned", placed == EMOTE_COUNT, f"pl
 
 check("buttons live in the scroll child, not the panel", L.eval("""(function()
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" then
+        if f.entry ~= nil then
             return f.parent ~= EmoteMenuFrame and f.parent ~= nil
         end
     end
@@ -281,7 +287,7 @@ def shown_buttons():
     return L.eval("""(function()
         local n = 0
         for _, f in ipairs(__frames) do
-            if f.template == "UIPanelButtonTemplate" and f.shown then n = n + 1 end
+            if f.entry ~= nil and f.shown then n = n + 1 end
         end
         return n
     end)()""")
@@ -299,7 +305,7 @@ n = shown_buttons()
 check("typing narrows the grid", 0 < n < EMOTE_COUNT, f"shown={n}")
 check("matched button is the right one", L.eval("""(function()
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" and f.shown and f.text == "wave" then return true end
+        if f.entry ~= nil and f.shown and f.text == "wave" then return true end
     end
     return false
 end)()""") is True)
@@ -311,7 +317,7 @@ check("clearing restores every button", shown_buttons() == EMOTE_COUNT, f"shown=
 SB.Type(SB, "sorry")
 check("matches the server text, not just the name", L.eval("""(function()
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" and f.shown and f.text == "apologize" then return true end
+        if f.entry ~= nil and f.shown and f.text == "apologize" then return true end
     end
     return false
 end)()""") is True)
@@ -319,7 +325,7 @@ end)()""") is True)
 SB.Type(SB, "/followme")
 check("matches the slash command too", L.eval("""(function()
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" and f.shown and f.text == "follow" then return true end
+        if f.entry ~= nil and f.shown and f.text == "follow" then return true end
     end
     return false
 end)()""") is True)
@@ -353,7 +359,7 @@ F.Resize(F, BW * 4 + INSET, 400)
 SB.Type(SB, "wave")
 placed_ok = L.eval("""(function()
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" and f.shown then
+        if f.entry ~= nil and f.shown then
             if not (f.points and f.points.TOPLEFT) then return false end
         end
     end
@@ -369,7 +375,7 @@ print("\n== 2d. animation / sound markers ==")
 L.execute("""
 __markers = {}
 for _, f in ipairs(__frames) do
-    if f.frameType == "Texture" and f.parent and f.parent.template == "UIPanelButtonTemplate" then
+    if f.frameType == "Texture" and f.layer == "OVERLAY" and f.parent and f.parent.entry ~= nil then
         local name = f.parent.text
         __markers[name] = (__markers[name] or 0) + 1
     end
@@ -422,7 +428,7 @@ if EM.MARKER_STYLE == "icons":
 # Markers must never overlap the label.
 check("label is inset away from the markers", L.eval("""(function()
     for _, f in ipairs(__frames) do
-        if f.template == "UIPanelButtonTemplate" then
+        if f.entry ~= nil then
             local fs = f.fontString
             if fs and fs.points and fs.points.RIGHT then
                 return fs.points.RIGHT.x < 0
@@ -435,10 +441,111 @@ end)()""") is True)
 if both:
     tip = L.eval("""(function()
         for _, f in ipairs(__frames) do
-            if f.template == "UIPanelButtonTemplate" and f.text == "%s" then return f.tiptext end
+            if f.entry ~= nil and f.text == "%s" then return f.tiptext end
         end
     end)()""" % both[0])
     check("tooltip explains the markers", "animation and a sound" in (tip or ""), repr(tip)[-60:])
+
+print("\n== 2e. tabs and edit mode ==")
+
+def tab(label):
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.label and f.label.text == "%s" and f.id then return f end
+        end
+    end)()""" % label)
+
+def edit_toggle():
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.template == "UIPanelButtonTemplate"
+               and (f.text == "Edit" or f.text == "Done") then return f end
+        end
+    end)()""")
+
+ALL, FAV = tab("All"), tab("Favourites")
+check("All and Favourites tabs exist", ALL is not None and FAV is not None)
+check("Edit button is hidden on All, not just disabled",
+      edit_toggle().shown is False, f"shown={edit_toggle().shown}")
+check("All tab shows every emote", shown_buttons() == EMOTE_COUNT, f"{shown_buttons()}")
+
+FAV.Click(FAV)
+check("Favourites starts empty", shown_buttons() == 0, f"{shown_buttons()}")
+check("empty tab explains itself", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.text and f.text:find("This tab is empty") then return f.shown end
+    end
+end)()""") is True)
+check("Edit button appears on a real tab", edit_toggle().shown is True,
+      f"shown={edit_toggle().shown}")
+
+# Entering edit mode reveals every emote so membership can be toggled.
+ET = edit_toggle()
+ET.Click(ET)
+check("edit mode shows all emotes to pick from", shown_buttons() == EMOTE_COUNT,
+      f"{shown_buttons()}")
+check("edit toggle now reads Done", edit_toggle().text == "Done", edit_toggle().text)
+
+# The whole point of the mode: a click curates and must NOT fire the emote.
+before_emotes = L.eval("#__emotes")
+wave = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil and f.text == "wave" then return f end
+    end
+end)()""")
+wave.Click(wave)
+check("clicking in edit mode does not perform the emote",
+      L.eval("#__emotes") == before_emotes,
+      f"{L.eval(chr(35)+chr(95)+chr(95)+chr(101)+chr(109)+chr(111)+chr(116)+chr(101)+chr(115))} vs {before_emotes}")
+check("emote added to the tab", L.eval('__core.EmoteMenu:TabContains("favourites", "wave")') is True)
+
+wave.Click(wave)
+check("clicking again removes it", L.eval('__core.EmoteMenu:TabContains("favourites", "wave")') is False)
+wave.Click(wave)
+
+# Leaving edit mode, the tab shows only its members.
+ET = edit_toggle()
+ET.Click(ET)
+check("leaving edit mode filters to members", shown_buttons() == 1, f"{shown_buttons()}")
+check("that member is wave", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil and f.shown then return f.text end
+    end
+end)()""") == "wave")
+
+# Membership is written where it can be saved.
+check("membership stored in the DB", L.eval('EmoteMenuDB.tabs.favourites.wave') is True)
+
+# Right-click works without entering edit mode.
+ALL.Click(ALL)
+dance = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.entry ~= nil and f.text == "dance" then return f end
+    end
+end)()""")
+before_emotes = L.eval("#__emotes")
+dance.Click(dance, "RightButton")
+check("right-click does not perform the emote", L.eval("#__emotes") == before_emotes)
+row = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.label and f.label.text and f.label.text:find("Favourites")
+           and f.label.text:find("Add to") then return f end
+    end
+end)()""")
+check("right-click offers Add to Favourites", row is not None)
+if row:
+    row.Click(row)
+    check("right-click adds to the tab",
+          L.eval('__core.EmoteMenu:TabContains("favourites", "dance")') is True)
+
+# Searching inside a tab narrows within it, it does not escape it.
+FAV.Click(FAV)
+SB.Type(SB, "wave")
+check("search stays inside the active tab", shown_buttons() == 1, f"{shown_buttons()}")
+SB.Type(SB, "cheer")
+check("search cannot show non-members", shown_buttons() == 0, f"{shown_buttons()}")
+SB.Type(SB, "")
+ALL.Click(ALL)
 
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""

@@ -64,6 +64,31 @@ function EmoteMenu:LoadVarAnc(var, def)
     end
 end
 
+-- Did anything we saved last session actually come back?
+--
+-- The Forever beta writes SavedVariables correctly but never reads them, so a
+-- carefully curated tab silently vanishes on reload. That is a worse experience
+-- than not having tabs at all, so say it plainly instead.
+--
+-- A marker is written at logout and looked for at load. The first ever run
+-- cannot be told apart from a broken client -- both have no marker -- so this
+-- is only consulted when the player edits something, by which point they have
+-- logged out at least once and the answer is real.
+local SETTINGS_MARKER = "settingsWritten"
+
+local function CheckSettingsRestored()
+    EmoteMenu.settingsRestored = type(EmoteMenuDB) == "table"
+        and EmoteMenuDB[SETTINGS_MARKER] ~= nil
+end
+
+function EmoteMenu:WarnIfNotPersisting()
+    if self.settingsRestored or self.persistWarningShown then return end
+    self.persistWarningShown = true
+    print("|cff66ccffEmote Menu|r: this client is not restoring addon settings, "
+        .. "so tab changes will be lost on reload. It affects every addon, not "
+        .. "just this one, and there is nothing an addon can do about it.")
+end
+
 -- LibDBIcon used to be handed the root of EmoteMenuDB, so it wrote "hide" and
 -- "minimapPos" alongside our own keys. Move them into their own subtable so
 -- upgrading users keep the icon where they put it, shown or hidden.
@@ -100,6 +125,71 @@ local function MigrateMinimapSettings()
 end
 
 ----------------------------------------------------------------------
+-- Tabs
+----------------------------------------------------------------------
+-- "all" is generated, never stored and never editable. Everything else keeps a
+-- set of emote names. Defaults ship in the addon so a tab is useful even when
+-- settings cannot be saved; the player's own changes layer on top in the DB.
+local TABS = {
+    { id = "all",        label = "All",        fixed = true },
+    { id = "favourites", label = "Favourites", defaults = {} },
+}
+EmoteMenu.TABS = TABS
+
+local function TabById(id)
+    for _, tab in ipairs(TABS) do
+        if tab.id == id then return tab end
+    end
+end
+
+-- Membership lives under EmoteMenuDB.tabs[id]. Reading goes through here so a
+-- missing or malformed DB behaves like an empty tab rather than erroring.
+local function TabSet(id, create)
+    if type(EmoteMenuDB) ~= "table" then return nil end
+    if type(EmoteMenuDB.tabs) ~= "table" then
+        if not create then return nil end
+        EmoteMenuDB.tabs = {}
+    end
+    if type(EmoteMenuDB.tabs[id]) ~= "table" then
+        if not create then return nil end
+        local seeded = {}
+        local tab = TabById(id)
+        for _, emote in ipairs(tab and tab.defaults or {}) do seeded[emote] = true end
+        EmoteMenuDB.tabs[id] = seeded
+    end
+    return EmoteMenuDB.tabs[id]
+end
+
+function EmoteMenu:TabContains(id, emote)
+    if id == "all" then return true end
+    local set = TabSet(id, false)
+    if set then return set[emote] == true end
+    -- Nothing stored yet, so fall back to what the tab ships with.
+    local tab = TabById(id)
+    for _, name in ipairs(tab and tab.defaults or {}) do
+        if name == emote then return true end
+    end
+    return false
+end
+
+function EmoteMenu:TabToggle(id, emote)
+    if id == "all" then return end
+    local set = TabSet(id, true)
+    if not set then return end
+    set[emote] = (not set[emote]) or nil
+    return set[emote] == true
+end
+
+function EmoteMenu:TabCount(id)
+    if id == "all" then return #(core.emoteTable or {}) end
+    local n = 0
+    for _, entry in ipairs(core.emoteTable or {}) do
+        if self:TabContains(id, entry.emote) then n = n + 1 end
+    end
+    return n
+end
+
+----------------------------------------------------------------------
 -- Main frame
 ----------------------------------------------------------------------
 local DEFAULT_COLUMNS = 10
@@ -117,7 +207,10 @@ local MARKER_AREA = (MARKER_SIZE * 2) + MARKER_GAP + 5
 
 local MARGIN_LEFT = 10          -- gap between the panel edge and the grid
 local MARGIN_BOTTOM = 10
-local CONTENT_TOP = 68          -- room for the title row and the search row
+local TAB_HEIGHT = 20
+local TAB_GAP = 4
+-- title row, tab row, search row
+local CONTENT_TOP = 92
 local SEARCH_HEIGHT = 20
 local COUNT_WIDTH = 92          -- 'showing 12 of 256' beside the search box
 local SCROLLBAR_WIDTH = 12
@@ -227,10 +320,10 @@ CloseB:SetPoint("TOPRIGHT", 0, 0)
 -- nasty surprise for a menu opened mid-play.
 
 local SearchBox = CreateFrame("EditBox", nil, PageF)
-SearchBox:SetPoint("TOPLEFT", MARGIN_LEFT, -(CONTENT_TOP - SEARCH_HEIGHT - 6))
+local SEARCH_TOP = -(CONTENT_TOP - SEARCH_HEIGHT - 6)
+SearchBox:SetPoint("TOPLEFT", MARGIN_LEFT, SEARCH_TOP)
 SearchBox:SetPoint("TOPRIGHT",
-    -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP + COUNT_WIDTH),
-    -(CONTENT_TOP - SEARCH_HEIGHT - 6))
+    -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP + COUNT_WIDTH), SEARCH_TOP)
 SearchBox:SetHeight(SEARCH_HEIGHT)
 SearchBox:SetAutoFocus(false)
 SearchBox:SetFontObject("GameFontHighlightSmall")
@@ -257,6 +350,74 @@ local CountLabel = PageF:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall"
 CountLabel:SetPoint("LEFT", SearchBox, "RIGHT", 6, 0)
 CountLabel:SetWidth(COUNT_WIDTH - 10)
 CountLabel:SetJustifyH("RIGHT")
+
+----------------------------------------------------------------------
+-- Tab strip
+----------------------------------------------------------------------
+-- Built by hand rather than from a Blizzard tab template: those differ between
+-- API generations, and the strip has to grow as the player adds tabs anyway.
+
+local ActiveTab = "all"
+local EditMode = false
+local TabButtons = {}
+
+local TabStrip = CreateFrame("Frame", nil, PageF)
+TabStrip:SetPoint("TOPLEFT", MARGIN_LEFT, -34)
+TabStrip:SetPoint("TOPRIGHT", -(MARGIN_LEFT + 80), -34)
+TabStrip:SetHeight(TAB_HEIGHT)
+
+-- The lock. Editing is off by default and has to be asked for, so a fast
+-- click can never quietly rearrange a tab.
+local EditToggle = CreateFrame("Button", nil, PageF, "UIPanelButtonTemplate")
+EditToggle:SetSize(70, TAB_HEIGHT)
+EditToggle:SetPoint("TOPRIGHT", -MARGIN_LEFT, -34)
+EditToggle:SetText("Edit")
+
+local EditBanner = PageF:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+EditBanner:SetPoint("LEFT", SearchBox, "LEFT", 4, 0)
+EditBanner:SetPoint("RIGHT", SearchBox, "RIGHT", -4, 0)
+EditBanner:SetJustifyH("LEFT")
+EditBanner:Hide()
+
+local function MakeTabButton(tab)
+    local b = CreateFrame("Button", nil, TabStrip)
+    b:SetHeight(TAB_HEIGHT)
+    b.id = tab.id
+
+    b.bg = b:CreateTexture(nil, "BACKGROUND")
+    b.bg:SetAllPoints()
+
+    b.label = b:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    b.label:SetPoint("CENTER")
+    b.label:SetText(tab.label)
+    -- Width follows the label so a longer custom tab name still fits.
+    b:SetWidth(math.max(44, b.label:GetStringWidth() + 18))
+    return b
+end
+
+local function RefreshTabs()
+    for _, b in ipairs(TabButtons) do
+        local active = (b.id == ActiveTab)
+        b.bg:SetColorTexture(1, 1, 1, active and 0.16 or 0.05)
+        b.label:SetTextColor(active and 1 or 0.65, active and 0.82 or 0.65,
+                             active and 0.25 or 0.65)
+    end
+    -- "All" is generated from the emote list, so there is nothing to edit.
+    -- Hidden rather than disabled: a greyed-out button invites "why can I
+    -- not click this?", while an absent one just reads as not applicable.
+    -- The tab strip keeps its width either way so the tabs do not shift
+    -- sideways as the button comes and goes.
+    local editable = ActiveTab ~= "all"
+    EditToggle:SetShown(editable)
+    EditToggle:SetText(EditMode and "Done" or "Edit")
+    EditBanner:SetShown(EditMode)
+    SearchBox:SetShown(not EditMode)
+    if EditMode then
+        local tab = TabById(ActiveTab)
+        EditBanner:SetText(("|cffffd100Editing %s|r  -- click emotes to add or remove")
+            :format(tab and tab.label or ActiveTab))
+    end
+end
 
 ----------------------------------------------------------------------
 -- Scrolling viewport
@@ -451,6 +612,92 @@ local function AddMarkers(button, entry)
     end
 end
 
+-- Declared up front: the right-click menu below defines ShowEmoteMenu and
+-- calls ApplyFilter, while the button OnClick calls both. Without these a
+-- later 'local' would shadow the definition with nil.
+local ShowEmoteMenu
+local ApplyFilter
+
+----------------------------------------------------------------------
+-- Right-click menu
+----------------------------------------------------------------------
+-- A shortcut for adding to a tab without entering edit mode. Built by hand:
+-- UIDropDownMenu is deprecated on modern clients and its replacement does not
+-- exist on Classic Era, so neither is safe for an addon targeting both.
+
+local ContextMenu = CreateFrame("Frame", nil, UIParent)
+ContextMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+ContextMenu:SetSize(150, 10)
+ContextMenu:Hide()
+ContextMenu.rows = {}
+
+ContextMenu.bg = ContextMenu:CreateTexture(nil, "BACKGROUND")
+ContextMenu.bg:SetAllPoints()
+ContextMenu.bg:SetColorTexture(0.04, 0.04, 0.04, 0.96)
+
+-- Clicking anywhere else dismisses it; without this it would linger.
+ContextMenu:SetScript("OnShow", function(self) self.opened = GetTime() end)
+ContextMenu:EnableMouse(true)
+
+local CloseContextMenu
+
+local function ContextRow(index)
+    local row = ContextMenu.rows[index]
+    if row then return row end
+    row = CreateFrame("Button", nil, ContextMenu)
+    row:SetHeight(18)
+    row:SetPoint("TOPLEFT", 4, -4 - (index - 1) * 18)
+    row:SetPoint("TOPRIGHT", -4, -4 - (index - 1) * 18)
+    row.label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.label:SetPoint("LEFT", 6, 0)
+    row.hl = row:CreateTexture(nil, "HIGHLIGHT")
+    row.hl:SetAllPoints()
+    row.hl:SetColorTexture(1, 1, 1, 0.12)
+    ContextMenu.rows[index] = row
+    return row
+end
+
+function ShowEmoteMenu(button, entry)
+    local n = 0
+    for _, tab in ipairs(TABS) do
+        if not tab.fixed then
+            n = n + 1
+            local row = ContextRow(n)
+            local inTab = EmoteMenu:TabContains(tab.id, entry.emote)
+            row.label:SetText((inTab and "|cff66ff66Remove from|r " or "Add to ")
+                .. tab.label)
+            row:SetScript("OnClick", function()
+                EmoteMenu:TabToggle(tab.id, entry.emote)
+                EmoteMenu:WarnIfNotPersisting()
+                CloseContextMenu()
+                ApplyFilter(SearchBox:GetText())
+            end)
+            row:Show()
+        end
+    end
+    for i = n + 1, #ContextMenu.rows do ContextMenu.rows[i]:Hide() end
+
+    if n == 0 then return end
+    ContextMenu:SetHeight(8 + n * 18)
+    ContextMenu:ClearAllPoints()
+    ContextMenu:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -2)
+    ContextMenu:Show()
+end
+
+function CloseContextMenu()
+    ContextMenu:Hide()
+end
+
+-- Any click that is not on the menu itself closes it.
+ContextMenu:SetScript("OnUpdate", function(self)
+    if not self:IsShown() then return end
+    if self:IsMouseOver() then return end
+    if IsMouseButtonDown and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
+        -- Ignore the click that opened it.
+        if GetTime() - (self.opened or 0) > 0.1 then self:Hide() end
+    end
+end)
+
 ----------------------------------------------------------------------
 -- Layout
 ----------------------------------------------------------------------
@@ -534,21 +781,26 @@ EmoteMenu.Reflow = Reflow
 
 -- Rebuild the visible set. Buttons are never destroyed, only shown or hidden,
 -- so filtering costs one pass over the list and no frame churn.
-local function ApplyFilter(text)
+function ApplyFilter(text)
     local needle = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     wipe(visible)
 
+    -- In edit mode every emote stays visible so membership can be toggled;
+    -- otherwise the tab restricts the list and the search narrows it further.
     for _, button in ipairs(buttons) do
-        if needle == "" or Matches(button.entry, needle) then
+        local inTab = EditMode or EmoteMenu:TabContains(ActiveTab, button.entry.emote)
+        if inTab and (needle == "" or Matches(button.entry, needle)) then
             visible[#visible + 1] = button
             button:Show()
         else
             button:Hide()
         end
+        button:UpdateMembership()
     end
 
     if needle == "" then
-        CountLabel:SetText("")
+        CountLabel:SetText(ActiveTab == "all" and ""
+            or ("%d of %d"):format(#visible, #buttons))
         ClearSearch:Hide()
     else
         CountLabel:SetText(("%d of %d"):format(#visible, #buttons))
@@ -556,6 +808,10 @@ local function ApplyFilter(text)
     end
     SearchBox.hint:SetShown(needle == "" and not SearchBox:HasFocus())
     NoMatches:SetShown(#visible == 0)
+    if #visible == 0 then
+        NoMatches:SetText(needle ~= "" and "No emotes match that search."
+            or "This tab is empty. Press Edit to add some.")
+    end
 
     -- A filter changes every position even when the column count has not, and
     -- the old scroll offset is meaningless against a shorter list.
@@ -563,6 +819,33 @@ local function ApplyFilter(text)
     Reflow(true)
 end
 EmoteMenu.ApplyFilter = ApplyFilter
+
+-- Tab buttons are created here rather than with the strip because selecting
+-- one has to re-run the filter, which is defined above.
+do
+    local x = 0
+    for _, tab in ipairs(TABS) do
+        local b = MakeTabButton(tab)
+        b:SetPoint("TOPLEFT", x, 0)
+        x = x + b:GetWidth() + TAB_GAP
+        b:SetScript("OnClick", function(self)
+            if ActiveTab == self.id then return end
+            ActiveTab = self.id
+            EditMode = false
+            RefreshTabs()
+            ApplyFilter(SearchBox:GetText())
+        end)
+        TabButtons[#TabButtons + 1] = b
+    end
+end
+
+EditToggle:SetScript("OnClick", function()
+    if ActiveTab == "all" then return end
+    EditMode = not EditMode
+    if EditMode then EmoteMenu:WarnIfNotPersisting() end
+    RefreshTabs()
+    ApplyFilter(SearchBox:GetText())
+end)
 
 SearchBox:SetScript("OnTextChanged", function(self) ApplyFilter(self:GetText()) end)
 SearchBox:SetScript("OnEditFocusGained", function(self) self.hint:Hide() end)
@@ -617,16 +900,46 @@ local function BuildEmoteButtons()
         -- target rather than letting the server silently drop it.
         local ignoresTarget = entry.targetText == ""
         eBtn.tiptext = BuildTooltip(entry) .. MarkerNote(entry)
-        if ignoresTarget then
-            eBtn:SetScript("OnClick", function()
+        eBtn:SetScript("OnClick", function(self, mouseButton)
+            if mouseButton == "RightButton" then
+                ShowEmoteMenu(self, entry)
+                return
+            end
+            -- In edit mode a click curates the tab. The emote deliberately does
+            -- not fire: that is what makes a mis-click harmless.
+            if EditMode and ActiveTab ~= "all" then
+                EmoteMenu:TabToggle(ActiveTab, emoteString)
+                EmoteMenu:WarnIfNotPersisting()
+                self:UpdateMembership()
+                RefreshTabs()
+                return
+            end
+            if ignoresTarget then
                 DoEmote(emoteString, "none")
-            end)
-        else
-            eBtn:SetScript("OnClick", function()
+            else
                 DoEmote(emoteString)
-            end)
+            end
+        end)
+
+        -- Shown only in edit mode, so the normal grid stays uncluttered.
+        eBtn.member = eBtn:CreateTexture(nil, "BORDER")
+        eBtn.member:SetAllPoints()
+        eBtn.member:Hide()
+
+        function eBtn:UpdateMembership()
+            if not EditMode or ActiveTab == "all" then
+                self.member:Hide()
+                return
+            end
+            if EmoteMenu:TabContains(ActiveTab, self.entry.emote) then
+                self.member:SetColorTexture(0.25, 0.75, 0.30, 0.35)
+            else
+                self.member:SetColorTexture(1, 1, 1, 0.04)
+            end
+            self.member:Show()
         end
 
+        eBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         eBtn:SetScript("OnEnter", ShowTooltip)
         eBtn:SetScript("OnLeave", GameTooltip_Hide)
     end
@@ -639,6 +952,11 @@ PageF:SetScript("OnSizeChanged", function()
 end)
 
 -- Restore size and position, then build and lay out the contents
+PageF:SetScript("OnHide", function()
+    EditMode = false
+    CloseContextMenu()
+end)
+
 PageF:SetScript("OnShow", function(self)
     self:SetSize(EmoteMenu.PanelW, EmoteMenu.PanelH)
     self:ClearAllPoints()
@@ -647,6 +965,7 @@ PageF:SetScript("OnShow", function(self)
     -- Reapply rather than Reflow: this rebuilds the visible set (which is
     -- empty on the very first show) and forces a full relayout, which also
     -- covers a height change that leaves the column count alone.
+    RefreshTabs()
     ApplyFilter(SearchBox:GetText())
 end)
 
@@ -721,6 +1040,7 @@ dbLoader:RegisterEvent("PLAYER_LOGOUT")
 
 dbLoader:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == addonName then
+        CheckSettingsRestored()
         _G.EmoteMenuDB = _G.EmoteMenuDB or {}
 
         -- Load init values if none in DB
@@ -751,5 +1071,6 @@ dbLoader:SetScript("OnEvent", function(self, event, arg1)
         EmoteMenuDB.MainPanelY = EmoteMenu.MainPanelY
         EmoteMenuDB.PanelW = EmoteMenu.PanelW
         EmoteMenuDB.PanelH = EmoteMenu.PanelH
+        EmoteMenuDB[SETTINGS_MARKER] = time and time() or 1
     end
 end)

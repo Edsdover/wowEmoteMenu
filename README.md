@@ -20,6 +20,17 @@ addon can do about it. Tracked at
 <https://us.forums.blizzard.com/en/wow/t/savedvariables-never-load-in-the-beta-%E2%80%94-all-addon-settings-reset-on-login-69913/2354798>.
 
 
+### Tabs
+
+**All** lists every emote. **Favourites** starts empty and is yours to fill.
+
+Press **Edit** on a tab to curate it: every emote appears, and clicking one
+adds or removes it rather than performing it, so a stray click cannot fire an
+emote at whoever you have targeted. Press **Done** when finished. You can also
+right-click any emote at any time for *Add to Favourites*.
+
+Search works inside the selected tab.
+
 TODO:
 1. Add options menu.
 2. Add sort

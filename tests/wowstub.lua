@@ -96,6 +96,15 @@ function frameMeta:SetText(t)
     end
 end
 function frameMeta:GetText() return self.text or "" end
+-- Rough but monotonic: enough for layout code that sizes to its label.
+function frameMeta:GetStringWidth() return #(self.text or "") * 6 end
+function frameMeta:GetStringHeight() return 12 end
+function frameMeta:SetEnabled(v) self.enabled = v end
+function frameMeta:IsEnabled() return self.enabled ~= false end
+function frameMeta:Enable() self.enabled = true end
+function frameMeta:Disable() self.enabled = false end
+function frameMeta:IsMouseOver() return false end
+function frameMeta:SetTextColor(r, g, b) self.textColor = { r, g, b } end
 function frameMeta:SetShown(v) if v then self:Show() else self:Hide() end end
 function frameMeta:IsVisible() return self.shown == true end
 
@@ -125,13 +134,16 @@ function frameMeta:GetName() return self.name end
 
 -- Textures and font strings are registered alongside frames so tests can find
 -- them; they start shown, as they do in the real client.
-local function newRegion(parent, kind)
-    local r = setmetatable({ frameType = kind, parent = parent, scripts = {},
-                             events = {}, points = {}, shown = true }, frameMeta)
+local function newRegion(parent, kind, layer)
+    local r = setmetatable({ frameType = kind, parent = parent, layer = layer,
+                             scripts = {}, events = {}, points = {},
+                             shown = true }, frameMeta)
     table.insert(_G.__frames, r)
     return r
 end
-function frameMeta:CreateTexture() return newRegion(self, "Texture") end
+-- The draw layer matters: markers are OVERLAY, the edit-mode membership tint
+-- is BORDER, and tests need to tell them apart.
+function frameMeta:CreateTexture(name, layer) return newRegion(self, "Texture", layer) end
 function frameMeta:CreateFontString() return newRegion(self, "FontString") end
 -- Buttons made from a template own a label; the addon re-anchors it so the
 -- text cannot run under the markers, so it has to be a real region here.
@@ -244,6 +256,9 @@ _G.Minimap:SetSize(140, 140)
 _G.Minimap.shown = true
 _G.MinimapCluster = CreateFrame("Frame", "MinimapCluster")
 
+function _G.GetTime() return 1000 end
+function _G.IsMouseButtonDown() return false end
+function _G.time() return 1758400000 end
 function _G.GetMinimapShape() return "ROUND" end
 function _G.GetCursorPosition() return 0, 0 end
 function _G.GetBuildInfo() return "1.60.1", "69913", "Sep 17 2026", 16001 end
