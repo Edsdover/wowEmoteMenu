@@ -1,0 +1,5 @@
+# The addon ships with CRLF line endings; keep them stable across platforms.
+* text=auto eol=crlf
+*.png binary
+*.tga binary
+*.blp binary
