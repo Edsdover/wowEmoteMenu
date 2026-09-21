@@ -11,21 +11,17 @@
 ![Emote Menu](docs/emote-menu.png)
 
 
-### A note on other game versions
+### Using it
 
-The emote text was captured from a live WoW: Forever client by performing every
-emote and recording what the server replied. Other versions may word a few
-differently; where they do the tooltip is slightly off but the emote itself
-still works. Emotes your client does not have are hidden rather than shown as
-buttons that do nothing.
+**Search** narrows the list as you type. It matches the emote's name, its slash
+command, and the text the server prints -- so "sorry" finds `apologize` and
+"cheers" finds `drink`.
 
-### Known issues
+**The little icons** on a button mean the emote plays a sound (the speaker) or
+an animation (the dancer). Every emote was checked in game one at a time.
 
-**WoW: Forever beta (1.60.1, build 69913):** the client writes addon
-SavedVariables correctly but never reads them back, so settings reset on every
-login. This affects every addon, not just this one, and there is nothing an
-addon can do about it. Tracked at
-<https://us.forums.blizzard.com/en/wow/t/savedvariables-never-load-in-the-beta-%E2%80%94-all-addon-settings-reset-on-login-69913/2354798>.
+**Drag the bottom-right corner** to resize. The columns reflow to fit and a
+scrollbar appears only when it is needed.
 
 
 ### Tabs
@@ -47,8 +43,43 @@ used last.
 
 Search works inside the selected tab.
 
-TODO:
-1. Add options menu.
-2. Add sort
-3. Add dropdowns
-4. Resizable window with scrolling when it is too small to show every emote
+
+### A note on other game versions
+
+The emote text was captured from a live WoW: Forever client by performing every
+emote and recording what the server replied. Other versions may word a few
+differently; where they do the tooltip is slightly off but the emote itself
+still works. Emotes your client does not have are hidden rather than shown as
+buttons that do nothing.
+
+
+### Known issues
+
+**WoW: Forever beta (1.60.1, build 69913):** the client writes addon
+SavedVariables correctly but never reads them back, so settings reset on every
+login. This affects every addon, not just this one, and there is nothing an
+addon can do about it. Tracked at
+<https://us.forums.blizzard.com/en/wow/t/savedvariables-never-load-in-the-beta-%E2%80%94-all-addon-settings-reset-on-login-69913/2354798>.
+
+
+### TODO
+
+1. Options menu
+2. Sorting, and filters for animated / voiced emotes
+3. Rename a tab after creating it
+4. Check `/mountspecial` once a mount is available -- it needs one to do
+   anything, so it is currently marked as having no animation
+
+
+### Building the emote data
+
+The emote list is generated rather than hand-written, because the wording and
+the available emotes differ between game versions. `tools/` holds the addon that
+records what the server actually prints and the scripts that turn that into
+`wowEmoteMenuStore.lua`; `tools/README.md` explains the whole loop.
+
+`tests/` runs the addon in a real Lua interpreter against a stubbed WoW API, so
+changes can be checked without loading the game:
+
+    python -m pip install lupa
+    python tests/run_tests.py
