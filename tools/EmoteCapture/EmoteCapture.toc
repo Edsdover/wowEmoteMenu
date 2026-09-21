@@ -1,0 +1,8 @@
+## Interface: 16001, 11509
+## Title: Emote Capture
+## Notes: Temporary tool. Walks every emote the client knows and records what the server prints.
+## Version: 1.1
+## SavedVariables: EmoteCaptureDB
+
+Captured.lua
+EmoteCapture.lua

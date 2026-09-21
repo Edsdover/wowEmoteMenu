@@ -1,0 +1,7 @@
+## Interface: 16001, 11509
+## Title: SV Repro
+## Notes: Minimal reproduction: SavedVariables are written but never restored.
+## Version: 1.0
+## SavedVariables: SVReproDB
+
+SVRepro.lua
