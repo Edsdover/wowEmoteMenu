@@ -103,14 +103,15 @@ end
 -- Main frame
 ----------------------------------------------------------------------
 local DEFAULT_COLUMNS = 10
-local DEFAULT_HEIGHT = 540
 
 local BUTTON_WIDTH = 85
 local BUTTON_HEIGHT = 18
 
 local MARGIN_LEFT = 10          -- gap between the panel edge and the grid
 local MARGIN_BOTTOM = 10
-local CONTENT_TOP = 60          -- room for the title and version text
+local CONTENT_TOP = 68          -- room for the title row and the search row
+local SEARCH_HEIGHT = 20
+local COUNT_WIDTH = 92          -- 'showing 12 of 256' beside the search box
 local SCROLLBAR_WIDTH = 12
 local SCROLLBAR_GAP = 4
 
@@ -126,8 +127,20 @@ local MAX_WIDTH, MAX_HEIGHT = 2400, 1600
 local DEFAULT_WIDTH = (BUTTON_WIDTH * DEFAULT_COLUMNS) + (MARGIN_LEFT * 2)
     + SCROLLBAR_WIDTH + SCROLLBAR_GAP
 
+-- Opening height is derived so the whole list fits without scrolling at the
+-- opening width, which is how the panel has always looked. Deriving it means
+-- adding emotes, or changing the header, adjusts it automatically instead of
+-- silently pushing the last row under the bottom edge.
+local DEFAULT_ROWS = math.ceil(#(core.emoteTable or {}) / DEFAULT_COLUMNS)
+local DEFAULT_HEIGHT = CONTENT_TOP + (DEFAULT_ROWS * BUTTON_HEIGHT) + MARGIN_BOTTOM
+-- ...but never taller than the screen it has to open on.
+local screenCap = math.floor((UIParent:GetHeight() or 900) * 0.85)
+DEFAULT_HEIGHT = math.max(MIN_HEIGHT, math.min(DEFAULT_HEIGHT, screenCap, MAX_HEIGHT))
+
 EmoteMenu.PanelW = DEFAULT_WIDTH
 EmoteMenu.PanelH = DEFAULT_HEIGHT
+-- Exposed so the tests can assert against the real defaults.
+EmoteMenu.DEFAULT_WIDTH, EmoteMenu.DEFAULT_HEIGHT = DEFAULT_WIDTH, DEFAULT_HEIGHT
 
 -- The .toc targets Classic Era (11509) and Forever (16001), which are different
 -- API generations: SetMinResize/SetMaxResize were removed in 10.0 and replaced
@@ -176,15 +189,13 @@ PageF.t:SetColorTexture(0.05, 0.05, 0.05, 0.9)
 
 -- Add main title
 PageF.mt = PageF:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-PageF.mt:SetPoint("TOPLEFT", 16, -16)
+PageF.mt:SetPoint("TOPLEFT", 16, -14)
 PageF.mt:SetText("Emote Menu")
 
 -- Add version text
 PageF.v = PageF:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-PageF.v:SetHeight(32)
-PageF.v:SetPoint("TOPLEFT", PageF.mt, "BOTTOMLEFT", 0, -8)
+PageF.v:SetPoint("BOTTOMLEFT", PageF.mt, "BOTTOMRIGHT", 8, 1)
 PageF.v:SetJustifyH("LEFT")
-PageF.v:SetJustifyV("TOP")
 PageF.v:SetNonSpaceWrap(true)
 PageF.v:SetText("v" .. addonVersion)
 
@@ -192,6 +203,46 @@ PageF.v:SetText("v" .. addonVersion)
 local CloseB = CreateFrame("Button", nil, PageF, "UIPanelCloseButton")
 CloseB:SetSize(30, 30)
 CloseB:SetPoint("TOPRIGHT", 0, 0)
+
+----------------------------------------------------------------------
+-- Search box
+----------------------------------------------------------------------
+-- Sits on its own row under the title so it can span the panel and stay usable
+-- when the panel is dragged narrow. Deliberately NOT focused when the panel
+-- opens: an EditBox with focus swallows the movement keys, which would be a
+-- nasty surprise for a menu opened mid-play.
+
+local SearchBox = CreateFrame("EditBox", nil, PageF)
+SearchBox:SetPoint("TOPLEFT", MARGIN_LEFT, -(CONTENT_TOP - SEARCH_HEIGHT - 6))
+SearchBox:SetPoint("TOPRIGHT",
+    -(MARGIN_LEFT + SCROLLBAR_WIDTH + SCROLLBAR_GAP + COUNT_WIDTH),
+    -(CONTENT_TOP - SEARCH_HEIGHT - 6))
+SearchBox:SetHeight(SEARCH_HEIGHT)
+SearchBox:SetAutoFocus(false)
+SearchBox:SetFontObject("GameFontHighlightSmall")
+SearchBox:SetTextInsets(6, 20, 0, 0)
+SearchBox:SetMaxLetters(40)
+
+SearchBox.bg = SearchBox:CreateTexture(nil, "BACKGROUND")
+SearchBox.bg:SetAllPoints()
+SearchBox.bg:SetColorTexture(1, 1, 1, 0.07)
+
+SearchBox.hint = SearchBox:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+SearchBox.hint:SetPoint("LEFT", 6, 0)
+SearchBox.hint:SetText("Search emotes")
+
+local ClearSearch = CreateFrame("Button", nil, SearchBox)
+ClearSearch:SetSize(16, 16)
+ClearSearch:SetPoint("RIGHT", -3, 0)
+ClearSearch:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+ClearSearch:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+ClearSearch:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+ClearSearch:Hide()
+
+local CountLabel = PageF:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+CountLabel:SetPoint("LEFT", SearchBox, "RIGHT", 6, 0)
+CountLabel:SetWidth(COUNT_WIDTH - 10)
+CountLabel:SetJustifyH("RIGHT")
 
 ----------------------------------------------------------------------
 -- Scrolling viewport
@@ -310,8 +361,25 @@ local function ComputeGrid(viewportWidth, count)
 end
 EmoteMenu.ComputeGrid = ComputeGrid
 
-local buttons = {}
+local NoMatches = ScrollF:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+NoMatches:SetPoint("TOP", 0, -24)
+NoMatches:SetText("No emotes match that search.")
+NoMatches:Hide()
+
+local buttons = {}      -- every emote button, in store order
+local visible = {}      -- the subset currently passing the filter
 local layoutColumns = 0
+
+-- Match the typed text against the emote's name, its slash command and the
+-- text the server prints. Including the printed text is what lets "sorry" find
+-- apologize and "cheers" find drink, which is most of the value at 256 entries.
+-- Plain find, not a pattern, so typing "%" or "-" cannot error.
+local function Matches(entry, needle)
+    return (entry.emote:lower():find(needle, 1, true)
+         or entry.cmd:lower():find(needle, 1, true)
+         or entry.noTargetText:lower():find(needle, 1, true)
+         or entry.targetText:lower():find(needle, 1, true)) ~= nil
+end
 
 -- Show the scrollbar only when the content actually overflows, and keep the
 -- current scroll offset inside the new range when the panel grows.
@@ -340,26 +408,75 @@ end
 -- thing that can change their positions, so a resize that does not cross a
 -- column boundary skips the loop entirely -- OnSizeChanged fires continuously
 -- while dragging the grip.
-local function Reflow()
+local function Reflow(force)
     if #buttons == 0 then return end
 
     local viewportWidth = ScrollF:GetWidth()
-    local columns, rows = ComputeGrid(viewportWidth, #buttons)
+    local columns, rows = ComputeGrid(viewportWidth, #visible)
 
-    if columns ~= layoutColumns then
+    if force or columns ~= layoutColumns then
         layoutColumns = columns
-        for i, button in ipairs(buttons) do
+        for i, button in ipairs(visible) do
             local column = (i - 1) % columns
             local row = math.floor((i - 1) / columns)
             button:ClearAllPoints()
             button:SetPoint("TOPLEFT", column * BUTTON_WIDTH, -row * BUTTON_HEIGHT)
         end
-        ScrollChild:SetSize(columns * BUTTON_WIDTH, rows * BUTTON_HEIGHT)
+        ScrollChild:SetSize(columns * BUTTON_WIDTH, math.max(1, rows * BUTTON_HEIGHT))
     end
 
     UpdateScrollRange()
 end
 EmoteMenu.Reflow = Reflow
+
+-- Rebuild the visible set. Buttons are never destroyed, only shown or hidden,
+-- so filtering costs one pass over the list and no frame churn.
+local function ApplyFilter(text)
+    local needle = (text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    wipe(visible)
+
+    for _, button in ipairs(buttons) do
+        if needle == "" or Matches(button.entry, needle) then
+            visible[#visible + 1] = button
+            button:Show()
+        else
+            button:Hide()
+        end
+    end
+
+    if needle == "" then
+        CountLabel:SetText("")
+        ClearSearch:Hide()
+    else
+        CountLabel:SetText(("%d of %d"):format(#visible, #buttons))
+        ClearSearch:Show()
+    end
+    SearchBox.hint:SetShown(needle == "" and not SearchBox:HasFocus())
+    NoMatches:SetShown(#visible == 0)
+
+    -- A filter changes every position even when the column count has not, and
+    -- the old scroll offset is meaningless against a shorter list.
+    ScrollBar:SetValue(0)
+    Reflow(true)
+end
+EmoteMenu.ApplyFilter = ApplyFilter
+
+SearchBox:SetScript("OnTextChanged", function(self) ApplyFilter(self:GetText()) end)
+SearchBox:SetScript("OnEditFocusGained", function(self) self.hint:Hide() end)
+SearchBox:SetScript("OnEditFocusLost", function(self)
+    self.hint:SetShown(self:GetText() == "")
+end)
+-- Escape clears the filter first and only gives up focus once it is empty,
+-- so a stray Escape does not close the whole panel mid-search.
+SearchBox:SetScript("OnEscapePressed", function(self)
+    if self:GetText() ~= "" then self:SetText("") else self:ClearFocus() end
+end)
+SearchBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+
+ClearSearch:SetScript("OnClick", function()
+    SearchBox:SetText("")
+    SearchBox:ClearFocus()
+end)
 
 -- Build the emote grid. Deferred until the first time the panel is shown so
 -- the frames are never created for players who never open the menu.
@@ -380,6 +497,7 @@ local function BuildEmoteButtons()
         eBtn:SetNormalFontObject("GameFontNormalSmall")
         eBtn:SetSize(BUTTON_WIDTH, BUTTON_HEIGHT)
         eBtn:SetText(emoteString)
+        eBtn.entry = entry
         buttons[i] = eBtn
 
         -- An empty targetText means the emote ignores the target, so force no
@@ -413,10 +531,10 @@ PageF:SetScript("OnShow", function(self)
     self:ClearAllPoints()
     self:SetPoint(EmoteMenu.MainPanelA, UIParent, EmoteMenu.MainPanelR, EmoteMenu.MainPanelX, EmoteMenu.MainPanelY)
     BuildEmoteButtons()
-    -- Force a pass: the column count may be unchanged from last time while the
-    -- height, and so the scroll range, is not.
-    layoutColumns = 0
-    Reflow()
+    -- Reapply rather than Reflow: this rebuilds the visible set (which is
+    -- empty on the very first show) and forces a full relayout, which also
+    -- covers a height change that leaves the column count alone.
+    ApplyFilter(SearchBox:GetText())
 end)
 
 ----------------------------------------------------------------------

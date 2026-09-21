@@ -168,6 +168,8 @@ print("\n== 2b. resize reflows the grid ==")
 core = L.globals()["__core"]
 EM = core.EmoteMenu
 F = L.globals()["EmoteMenuFrame"]
+DEFAULT_W = EM.DEFAULT_WIDTH
+DEFAULT_H = EM.DEFAULT_HEIGHT
 
 # Pure layout arithmetic, independent of any frame.
 for viewport, count, want_cols in ((850, EMOTE_COUNT, 10), (255, EMOTE_COUNT, 3),
@@ -202,7 +204,7 @@ F.Resize(F, 1200, 540)
 check("widening reflows to more columns", grid_state() == 13, f"got {grid_state()}")
 
 # Back to default.
-F.Resize(F, 886, 540)
+F.Resize(F, DEFAULT_W, DEFAULT_H)
 check("returns to 10 columns at default width", grid_state() == 10, f"got {grid_state()}")
 
 def scrollbar_shown():
@@ -223,12 +225,12 @@ def scroll_max():
 check("no scrollbar when everything fits", scrollbar_shown() is False,
       f"shown={scrollbar_shown()} max={scroll_max()}")
 
-F.Resize(F, 886, 300)
+F.Resize(F, DEFAULT_W, 300)
 check("scrollbar appears when too short", scrollbar_shown() is True,
       f"shown={scrollbar_shown()} max={scroll_max()}")
 check("scroll range is positive", scroll_max() > 0, f"max={scroll_max()}")
 
-F.Resize(F, 886, 540)
+F.Resize(F, DEFAULT_W, DEFAULT_H)
 check("scrollbar hides again when it fits", scrollbar_shown() is False,
       f"shown={scrollbar_shown()}")
 
@@ -254,6 +256,106 @@ end)()""") is True)
 
 check("panel is resizable with bounds set", L.eval(
     "EmoteMenuFrame.resizable == true and EmoteMenuFrame.resizeBounds ~= nil"))
+
+print("\n== 2c. search filters the grid ==")
+
+def box():
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.frameType == "EditBox" then return f end
+        end
+    end)()""")
+
+SB = box()
+check("a search box exists", SB is not None)
+check("search box does not steal focus on open",
+      SB.autoFocus is False, f"autoFocus={SB.autoFocus}")
+
+def shown_buttons():
+    return L.eval("""(function()
+        local n = 0
+        for _, f in ipairs(__frames) do
+            if f.template == "UIPanelButtonTemplate" and f.shown then n = n + 1 end
+        end
+        return n
+    end)()""")
+
+def count_label():
+    return L.eval("""(function()
+        for _, f in ipairs(__frames) do
+            if f.frameType == "Frame" and f.name == "EmoteMenuFrame" then end
+        end
+        return __core.EmoteMenu and "" or ""
+    end)()""")
+
+SB.Type(SB, "wave")
+n = shown_buttons()
+check("typing narrows the grid", 0 < n < EMOTE_COUNT, f"shown={n}")
+check("matched button is the right one", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" and f.shown and f.text == "wave" then return true end
+    end
+    return false
+end)()""") is True)
+
+SB.Type(SB, "")
+check("clearing restores every button", shown_buttons() == EMOTE_COUNT, f"shown={shown_buttons()}")
+
+# Matching the printed text is what makes the search worth having.
+SB.Type(SB, "sorry")
+check("matches the server text, not just the name", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" and f.shown and f.text == "apologize" then return true end
+    end
+    return false
+end)()""") is True)
+
+SB.Type(SB, "/followme")
+check("matches the slash command too", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" and f.shown and f.text == "follow" then return true end
+    end
+    return false
+end)()""") is True)
+
+# A pattern character must not blow up a plain substring search.
+ok = True
+try:
+    for junk in ("%", "-", "[", "%s", "((("):
+        SB.Type(SB, junk)
+except Exception as e:
+    ok = False
+check("pattern characters do not error", ok)
+
+SB.Type(SB, "zzzznothing")
+check("no matches hides every button", shown_buttons() == 0, f"shown={shown_buttons()}")
+check("no-match message is shown", L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.text == "No emotes match that search." then return f.shown end
+    end
+end)()""") is True)
+
+# Escape clears the filter before it gives up focus, so it cannot close the panel
+# out from under a search.
+SB.Type(SB, "dance")
+SB.Escape(SB)
+check("escape clears the filter first", SB.GetText(SB) == "", repr(SB.GetText(SB)))
+check("all buttons back after escape", shown_buttons() == EMOTE_COUNT)
+
+# Filtering while narrow must still lay out correctly.
+F.Resize(F, 400, 400)
+SB.Type(SB, "wave")
+placed_ok = L.eval("""(function()
+    for _, f in ipairs(__frames) do
+        if f.template == "UIPanelButtonTemplate" and f.shown then
+            if not (f.points and f.points.TOPLEFT) then return false end
+        end
+    end
+    return true
+end)()""")
+check("filtered buttons are positioned when narrow", placed_ok is True)
+SB.Type(SB, "")
+F.Resize(F, DEFAULT_W, DEFAULT_H)
 
 print("\n== 3. drag saves position, logout persists it ==")
 L.execute("""

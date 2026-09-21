@@ -30,6 +30,8 @@ _G.GameTooltip = {
 }
 function _G.GameTooltip_Hide() end
 
+_G.__frames = {}
+
 -- Frame -------------------------------------------------------------------
 local frameMeta = {}
 
@@ -89,8 +91,13 @@ function frameMeta:IsShown() return self.shown == true end
 function frameMeta:SetText(t)
     assert(type(t) == "string", "SetText got " .. type(t) .. " (nil label?)")
     self.text = t
+    if self.frameType == "EditBox" and self.scripts.OnTextChanged then
+        self.scripts.OnTextChanged(self, false)
+    end
 end
-function frameMeta:GetText() return self.text end
+function frameMeta:GetText() return self.text or "" end
+function frameMeta:SetShown(v) if v then self:Show() else self:Hide() end end
+function frameMeta:IsVisible() return self.shown == true end
 
 -- Both SetPoint(point, x, y) and SetPoint(point, rel, relPoint, x, y) are used.
 function frameMeta:SetPoint(point, a, b, c, d)
@@ -116,12 +123,16 @@ function frameMeta:IsEventRegistered(e) return self.events[e] == true end
 function frameMeta:GetParent() return self.parent end
 function frameMeta:GetName() return self.name end
 
-function frameMeta:CreateTexture()
-    return setmetatable({ scripts = {}, events = {}, points = {} }, frameMeta)
+-- Textures and font strings are registered alongside frames so tests can find
+-- them; they start shown, as they do in the real client.
+local function newRegion(parent, kind)
+    local r = setmetatable({ frameType = kind, parent = parent, scripts = {},
+                             events = {}, points = {}, shown = true }, frameMeta)
+    table.insert(_G.__frames, r)
+    return r
 end
-function frameMeta:CreateFontString()
-    return setmetatable({ scripts = {}, events = {}, points = {} }, frameMeta)
-end
+function frameMeta:CreateTexture() return newRegion(self, "Texture") end
+function frameMeta:CreateFontString() return newRegion(self, "FontString") end
 
 function frameMeta:Show()
     self.shown = true
@@ -158,6 +169,26 @@ function frameMeta:GetScrollChild() return self.scrollChild end
 function frameMeta:SetVerticalScroll(v) self.vscroll = v end
 function frameMeta:GetVerticalScroll() return self.vscroll or 0 end
 
+-- EditBox
+function frameMeta:SetAutoFocus(v) self.autoFocus = v end
+function frameMeta:HasFocus() return self.focused == true end
+function frameMeta:SetFocus() self.focused = true end
+function frameMeta:ClearFocus()
+    self.focused = false
+    if self.scripts.OnEditFocusLost then self.scripts.OnEditFocusLost(self) end
+end
+function frameMeta:SetTextInsets() end
+function frameMeta:SetMaxLetters(n) self.maxLetters = n end
+function frameMeta:SetFontObject() end
+-- SetText on an EditBox fires OnTextChanged, which is what drives filtering.
+function frameMeta:Type(text)
+    self.text = text
+    if self.scripts.OnTextChanged then self.scripts.OnTextChanged(self, true) end
+end
+function frameMeta:Escape()
+    if self.scripts.OnEscapePressed then self.scripts.OnEscapePressed(self) end
+end
+
 -- Slider
 function frameMeta:SetMinMaxValues(lo, hi) self.minVal, self.maxVal = lo, hi end
 function frameMeta:GetMinMaxValues() return self.minVal or 0, self.maxVal or 0 end
@@ -185,7 +216,6 @@ stubMethods(frameMeta, {
     "SetOrientation", "SetValueStep", "SetObeyStepOnDrag", "SetTexCoord",
 })
 
-_G.__frames = {}
 function _G.CreateFrame(frameType, name, parent, template)
     local f = setmetatable({
         frameType = frameType, name = name, parent = parent, template = template,
@@ -217,5 +247,9 @@ _G.C_AddOns = {
         return ({ Version = "1.0.0", Title = "Emote Menu" })[field]
     end,
 }
+-- WoW globals that are not part of standard Lua.
+function _G.wipe(t) for k in pairs(t) do t[k] = nil end return t end
+_G.table.wipe = _G.wipe
+function _G.strsplit(sep, str) return str end
 _G.hooksecurefunc = function() end
 _G.geterrorhandler = function() return function(e) error(e, 0) end end
