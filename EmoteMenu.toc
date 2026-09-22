@@ -1,6 +1,6 @@
 ## Interface: 120100, 50504, 38002, 20506, 11509, 16001
 ## Author: Edwin Dover
-## Version: 1.1.0
+## Version: 1.1.1
 ## Title: Emote Menu
 ## X-Curse-Project-ID: 1018942
 ## X-Wago-ID: QNl4gxNe

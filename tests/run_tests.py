@@ -1535,17 +1535,45 @@ TOC = open(os.path.join(ADDON, "EmoteMenu.toc"), encoding="utf-8").read()
 
 check("Bindings.xml is listed in the toc", "Bindings.xml" in TOC)
 
-bind_name = _re.search(r'<Binding name="([^"]+)"', BINDINGS)
-bind_body = _re.search(r'>\s*(\w+)\(\)\s*</Binding>', BINDINGS)
-check("the XML declares a binding and a body", bind_name and bind_body, BINDINGS[:120])
+# Parsed rather than pattern-matched, because WoW parses it too and is less
+# forgiving than a regex: a comment containing a double hyphen, or a stray
+# angle bracket, is malformed XML and takes the whole file down with it.
+import xml.etree.ElementTree as _ET
+try:
+    BIND_ROOT = _ET.parse(os.path.join(ADDON, "Bindings.xml")).getroot()
+    xml_error = ""
+except Exception as _e:
+    BIND_ROOT, xml_error = None, str(_e)
+check("Bindings.xml is well-formed XML", BIND_ROOT is not None, xml_error)
+
+bindings = list(BIND_ROOT) if BIND_ROOT is not None else []
+check("its root is Bindings", BIND_ROOT is not None and BIND_ROOT.tag == "Bindings",
+      BIND_ROOT.tag if BIND_ROOT is not None else "unparsed")
+check("it declares exactly one binding", len(bindings) == 1, len(bindings))
+check("which is a Binding element", bindings and bindings[0].tag == "Binding",
+      bindings[0].tag if bindings else "none")
+
+# 1.1.0 shipped with category="ADDONS" on this element. WoW does not ignore an
+# attribute it does not know -- it rejects the whole element and registers no
+# binding, which is an error on login and no key. So the allowed set is what
+# has been seen working in game, and nothing else goes in without being tried
+# there first.
+ALLOWED_BINDING_ATTRS = {"name"}
+attrs = set(bindings[0].keys()) if bindings else set()
+check("it carries no attribute beyond a name", attrs <= ALLOWED_BINDING_ATTRS,
+      f"unverified: {sorted(attrs - ALLOWED_BINDING_ATTRS)}")
+# A header rendered as the literal string HEADER_EMOTEMENU on the Forever beta,
+# and one binding does not need a heading anyway.
+check("and no header", "header" not in attrs)
+
+bind_name = _re.match(r"(\w+)", bindings[0].get("name", "")) if bindings else None
+bind_body = _re.match(r"(\w+)\(\)$", (bindings[0].text or "").strip()) if bindings else None
+check("the binding has a name and a body that calls one function",
+      bind_name and bind_body,
+      f"{bindings[0].get('name') if bindings else None} / {(bindings[0].text or '').strip() if bindings else None}")
 check("the binding's name global is defined",
       f"BINDING_NAME_{bind_name.group(1)} =" in ADDON_SRC,
       f"BINDING_NAME_{bind_name.group(1)}")
-# A header row rendered as the literal string HEADER_EMOTEMENU in the Forever
-# beta, and one binding does not need a heading anyway. Kept out on purpose.
-check("no header is declared", "header=" not in BINDINGS, "header attribute is back")
-check("exactly one binding", BINDINGS.count("<Binding ") == 1,
-      BINDINGS.count("<Binding "))
 
 L17 = new_runtime("nil")
 L17.execute(f'''

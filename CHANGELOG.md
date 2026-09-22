@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.1
+
+### Fixed
+
+- **The key binding did not work in 1.1.0, and threw an error on login.** The
+  binding asked to be filed under the AddOns group of the Key Bindings panel
+  using an attribute this client's XML schema does not have. WoW does not
+  ignore an attribute it does not recognise -- it rejects the whole element,
+  which meant `Unrecognized XML: Binding` on login and no key binding at all.
+  The row is now plain, and sits under `Other` in the Key Bindings panel as
+  `Open Emote Menu`.
+
 ## 1.1.0
 
 ### Added
