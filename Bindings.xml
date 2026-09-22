@@ -1,23 +1,6 @@
 <Bindings>
-    <!-- Deliberately bare: a name, and a body. Nothing else.
-
-         An earlier version carried a category attribute to push the row into
-         the AddOns group of the Key Bindings panel. That attribute is not in
-         this client's schema, and WoW does not ignore what it does not know.
-         It rejects the whole element: "Bindings.xml:12 Unrecognized XML:
-         Binding", and no binding at all. Do not add an attribute here that has
-         not been seen working in game.
-
-         No header either. One rendered as the literal string HEADER_EMOTEMENU:
-         the panel looks a header's display name up as BINDING_NAME_HEADER_
-         plus the header name, not the BINDING_HEADER_ form that every addon
-         guide says to define, so the lookup missed and it printed the raw key.
-         One binding does not need a heading over it regardless.
-
-         The body runs in the global environment, so it calls a global the
-         addon defines rather than anything local to it. The name shown in the
-         panel comes from BINDING_NAME_EMOTEMENU_TOGGLE, set alongside it. -->
-    <Binding name="EMOTEMENU_TOGGLE">
-        EmoteMenu_Toggle()
-    </Binding>
+	<!-- Keep this file bare. See the Key binding section in wowEmoteMenu.lua -->
+	<Binding name="EMOTEMENU_TOGGLE">
+		EmoteMenu_Toggle()
+	</Binding>
 </Bindings>

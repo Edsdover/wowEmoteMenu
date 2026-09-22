@@ -9,8 +9,8 @@
   using an attribute this client's XML schema does not have. WoW does not
   ignore an attribute it does not recognise -- it rejects the whole element,
   which meant `Unrecognized XML: Binding` on login and no key binding at all.
-  The row is now plain, and sits under `Other` in the Key Bindings panel as
-  `Open Emote Menu`.
+  `Bindings.xml` is now as plain as it can be, and the row sits under `Other`
+  in the Key Bindings panel as `Open Emote Menu`.
 
 ## 1.1.0
 

@@ -1566,6 +1566,20 @@ check("it carries no attribute beyond a name", attrs <= ALLOWED_BINDING_ATTRS,
 # and one binding does not need a heading anyway.
 check("and no header", "header" not in attrs)
 
+# Being well-formed is not enough: two rewrites of this file were rejected by
+# the client while parsing cleanly here. The one that has been seen loading is
+# small and plain, so the file is held to that shape -- anything longer or
+# fancier has to be proven in game, not in this suite.
+bind_lines = BINDINGS.splitlines()
+check("Bindings.xml stays small", len(bind_lines) <= 8, f"{len(bind_lines)} lines")
+check("with no blank lines in it",
+      all(line.strip() for line in bind_lines),
+      f"blank at {[i + 1 for i, l in enumerate(bind_lines) if not l.strip()]}")
+check("and no comment running over more than one line",
+      all(("<!--" in line) == ("-->" in line)
+          for line in bind_lines if "<!--" in line or "-->" in line),
+      "a comment spans lines")
+
 bind_name = _re.match(r"(\w+)", bindings[0].get("name", "")) if bindings else None
 bind_body = _re.match(r"(\w+)\(\)$", (bindings[0].text or "").strip()) if bindings else None
 check("the binding has a name and a body that calls one function",

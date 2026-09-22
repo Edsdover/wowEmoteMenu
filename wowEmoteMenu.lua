@@ -2397,9 +2397,32 @@ end
 -- every other name is: a bare Toggle() in _G would be asking for a collision.
 --
 -- The label the game's Key Bindings panel shows, looked up from the binding
--- name in the XML. It has to match exactly, which the test suite checks,
+-- name in Bindings.xml. It has to match exactly, which the test suite checks,
 -- because a mismatch shows up as a raw key or a blank row rather than an error.
 _G.BINDING_NAME_EMOTEMENU_TOGGLE = "Open Emote Menu"
+
+-- Why Bindings.xml is six lines with nothing in it:
+--
+-- WoW's XML is validated against a schema and it does not skip what it does
+-- not recognise -- it throws out the element. 1.1.0 shipped a category
+-- attribute there, hoping to file the row under AddOns rather than Other, and
+-- got "Unrecognized XML: Binding" on login with no binding at all. Do not add
+-- an attribute to that file that has not been seen working in game.
+--
+-- The rewrite that removed it failed too, this time reporting the name
+-- attribute as unrecognised -- an attribute Prat uses on this same client
+-- without complaint. What that rewrite also had, and the version that worked
+-- did not, was a blank line inside a long XML comment. Rather than establish
+-- exactly which part the parser dislikes, that file now matches the shape of
+-- one known to load here: tabs, CRLF, one short comment on a single line, and
+-- a name. Everything worth saying is said in this comment instead, where the
+-- worst a parser can do about it is nothing.
+--
+-- A header is also deliberately absent. One rendered as the literal string
+-- HEADER_EMOTEMENU: the panel looks a header's display name up as
+-- BINDING_NAME_HEADER_ plus the header name, not the BINDING_HEADER_ form
+-- every addon guide says to define, so the lookup missed and it printed the
+-- raw key. One binding does not need a heading over it anyway.
 
 function _G.EmoteMenu_Toggle()
     EmoteMenu:Toggle()
