@@ -569,6 +569,17 @@ PageF:EnableMouse(true)
 PageF:SetMovable(true)
 PageF:SetResizable(true)
 
+-- Never user-placed. A user-placed frame is written to the client's own layout
+-- cache (WTF/.../layout-local.txt) and restored from it, position and size
+-- both -- and this addon already restores both itself from saved variables.
+-- Two systems owning the same four numbers is what made the panel snap to
+-- another size and place after a resize, because whichever ran last won.
+--
+-- Both StopMovingOrSizing paths have to say this, since moving and sizing each
+-- set the flag. The options dialog is deliberately left user-placed: nothing
+-- here manages its position, so the client keeping it is a free feature.
+PageF:SetUserPlaced(false)
+
 -- Three columns and four rows of whatever a button currently costs. The
 -- options panel can change that, so the limit is recalculated rather than
 -- fixed: at 180-wide buttons the old floor would have shown a single column.
@@ -1152,6 +1163,10 @@ Grip:SetScript("OnMouseDown", function()
 end)
 Grip:SetScript("OnMouseUp", function()
     PageF:StopMovingOrSizing()
+    -- Sizing marks the frame user-placed exactly as moving does, so this has
+    -- to opt out again. Missing here was the snapping bug: the drag handler
+    -- did it and the grip did not.
+    PageF:SetUserPlaced(false)
     EmoteMenu.PanelW = math.floor(PageF:GetWidth() + 0.5)
     EmoteMenu.PanelH = math.floor(PageF:GetHeight() + 0.5)
     SavePlacement(PageF)

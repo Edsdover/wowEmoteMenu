@@ -1708,6 +1708,24 @@ check("resize also records the position",
       f'x={L.eval("__core.EmoteMenu.MainPanelX")}')
 check("sizing starts from a top-left anchor",
       L.eval("__core.EmoteMenu.MainPanelA") is not None)
+# The snapping bug, twice over. A user-placed frame goes into the client's own
+# layout cache and is restored from it -- position AND size -- while this addon
+# restores both from saved variables, so the two fight and the panel jumps. The
+# drag handler always opted out; the grip did not, so only resizing enrolled it.
+check("resizing leaves the panel out of the client's layout cache",
+      L.eval("EmoteMenuFrame.userPlaced") is False,
+      f"userPlaced={L.eval('EmoteMenuFrame.userPlaced')}")
+L.execute("""
+local f = EmoteMenuFrame
+f.userPlaced = nil
+f.scripts.OnDragStart(f)
+f.scripts.OnDragStop(f)
+""")
+check("and so does dragging it", L.eval("EmoteMenuFrame.userPlaced") is False,
+      f"userPlaced={L.eval('EmoteMenuFrame.userPlaced')}")
+check("the options dialog is left user-placed on purpose, so the client keeps it",
+      L.eval("EmoteMenuOptionsFrame.userPlaced") is not False,
+      L.eval("EmoteMenuOptionsFrame.userPlaced"))
 F.Resize(F, DEFAULT_W, DEFAULT_H)
 
 print("== 3d. a second copy of the addon does not error ==")

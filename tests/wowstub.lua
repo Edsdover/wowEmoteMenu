@@ -188,6 +188,8 @@ function frameMeta:Resize(w, h)
     self:SetSize(w, h)
     if self.scripts.OnSizeChanged then self.scripts.OnSizeChanged(self, w, h) end
 end
+function frameMeta:SetUserPlaced(v) self.userPlaced = v end
+function frameMeta:IsUserPlaced() return self.userPlaced == true end
 function frameMeta:SetResizable(v) self.resizable = v end
 function frameMeta:SetResizeBounds(minW, minH, maxW, maxH)
     self.resizeBounds = { minW, minH, maxW, maxH }
@@ -298,7 +300,7 @@ stubMethods(frameMeta, {
     "SetAllPoints", "SetColorTexture", "SetFrameStrata",
     "SetClampedToScreen", "EnableMouse", "SetMovable",
     "RegisterForDrag", "RegisterForClicks", "StartMoving", "StopMovingOrSizing",
-    "StartSizing", "SetUserPlaced",
+    "StartSizing",
     "SetJustifyH", "SetJustifyV", "SetNonSpaceWrap", "SetAlpha", "SetScale",
     "SetNormalTexture", "SetPushedTexture", "SetHighlightTexture",
     "SetDisabledTexture", "GetNormalTexture", "SetParent", "Raise", "SetToplevel",
