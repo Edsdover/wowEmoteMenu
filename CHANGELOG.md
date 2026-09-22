@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.2
+
+### Fixed
+
+- **Two errors on every login since 1.1.0.**
+
+      Bindings.xml:2 Unrecognized XML: Binding
+      Bindings.xml:2 Unrecognized XML attribute: name
+
+  `Bindings.xml` was listed in the `.toc`, which it must not be. The client
+  finds that file in the addon folder by name and loads it through the
+  bindings parser on its own; listing it makes the client parse it a second
+  time as a UI XML file, and that parser knows `Frame` and `Button` and has
+  never heard of a `Binding`.
+
+  The key binding itself was working the whole time, which is what made this
+  hard to see -- the auto-load registered it while the `.toc` entry threw
+  errors alongside. 1.1.1 changed the contents of that file looking for the
+  cause and so fixed nothing.
+
 ## 1.1.1
 
 ### Fixed

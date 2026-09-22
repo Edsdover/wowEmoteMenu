@@ -1533,7 +1533,20 @@ BINDINGS = open(os.path.join(ADDON, "Bindings.xml"), encoding="utf-8").read()
 ADDON_SRC = open(os.path.join(ADDON, "wowEmoteMenu.lua"), encoding="utf-8").read()
 TOC = open(os.path.join(ADDON, "EmoteMenu.toc"), encoding="utf-8").read()
 
-check("Bindings.xml is listed in the toc", "Bindings.xml" in TOC)
+# The opposite of what it looks like it should be. The client finds
+# Bindings.xml in the addon folder by name and loads it through the bindings
+# parser by itself; listing it in the .toc makes the client ALSO parse it as a
+# UI XML file, and that parser does not know what a Binding is:
+#
+#     Bindings.xml:2 Unrecognized XML: Binding
+#     Bindings.xml:2 Unrecognized XML attribute: name
+#
+# That shipped in 1.1.0 and 1.1.1. The binding worked throughout -- the
+# auto-load registered it while the .toc entry errored alongside it -- which
+# is why rewriting the file's contents never changed anything.
+check("Bindings.xml is NOT listed in the toc", "Bindings.xml" not in TOC,
+      "listing it makes the UI XML parser choke on it every login")
+check("but it is there to be found", os.path.exists(os.path.join(ADDON, "Bindings.xml")))
 
 # Parsed rather than pattern-matched, because WoW parses it too and is less
 # forgiving than a regex: a comment containing a double hyphen, or a stray
